@@ -1,34 +1,27 @@
-# CloudX
+# cx-cli
 
-CloudX is a developer productivity CLI for managing cloud environments and remote sessions.
+A workflow-oriented cloud operations CLI designed to simplify repetitive developer tasks.
 
-## Goals
+## Roadmap
 
-- Make connecting to cloud environments effortless.
-- Reduce repetitive terminal commands.
-- Provide a beautiful CLI UX.
-- Support AWS first.
-- Support multiple cloud providers in the future.
+### Phase 1 — Foundation ✅
+- [x] 001 Configuration Foundation
+- [x] 002 Workspace Management
 
-## Non Goals
+### Phase 2 — Cloud Model
+- [ ] 003 Provider Framework
+- [ ] 004 Resource Catalog
 
-- Not another Terraform.
-- Not another Kubernetes CLI.
-- Not a cloud management platform.
-- Not a replacement for AWS CLI.
+### Phase 3 — User Experience
+- [ ] 005 cx init
+- [ ] 006 doctor
+- [ ] 007 completion
+- [ ] 008 config edit
 
-## Target Users
-
-- Backend Engineers
-- DevOps Engineers
-- Platform Engineers
-- SREs
-
-## MVP
-
-- AWS authentication
-- Profile management
-- Session Manager
-- tmux integration
-- Environment switching
-- Configuration management
+### Phase 4 — Workflows ⭐
+- [ ] 009 db
+- [ ] 010 cache
+- [ ] 011 search
+- [ ] 012 compute
+- [ ] 013 logs
+- [ ] 014 service

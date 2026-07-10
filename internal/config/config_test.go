@@ -21,8 +21,8 @@ func TestDefault(t *testing.T) {
 	if cfg.Version != Version {
 		t.Errorf("expected default version to be %q, got %q", Version, cfg.Version)
 	}
-	if cfg.Contexts == nil || len(cfg.Contexts) != 0 {
-		t.Errorf("expected empty contexts map, got %v", cfg.Contexts)
+	if cfg.Workspaces == nil || len(cfg.Workspaces) != 0 {
+		t.Errorf("expected empty workspaces map, got %v", cfg.Workspaces)
 	}
 	if cfg.Preferences == nil || len(cfg.Preferences) != 0 {
 		t.Errorf("expected empty preferences map, got %v", cfg.Preferences)
@@ -54,14 +54,14 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func TestLoaderLoadAndSave(t *testing.T) {
+func TestStoreLoadAndSave(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
 
-	loader := New(configPath)
+	store := New(configPath)
 
 	// 1. Load when file does not exist (should return Default and not create file)
-	cfg, err := loader.Load()
+	cfg, err := store.Load()
 	if err != nil {
 		t.Fatalf("unexpected error loading non-existent config: %v", err)
 	}
@@ -75,9 +75,9 @@ func TestLoaderLoadAndSave(t *testing.T) {
 	// 2. Save a custom config
 	cfg.Version = "1.0"
 	cfg.Preferences["theme"] = "dark"
-	
-	// Add context with raw generic map
-	cfg.Contexts["staging"] = &Context{
+
+	// Add workspace with raw generic map
+	cfg.Workspaces["staging"] = &Workspace{
 		Provider: "aws",
 		Raw: map[string]any{
 			"profile": "staging-admin",
@@ -85,7 +85,7 @@ func TestLoaderLoadAndSave(t *testing.T) {
 		},
 	}
 
-	err = loader.Save(cfg)
+	err = store.Save(cfg)
 	if err != nil {
 		t.Fatalf("unexpected error saving config: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestLoaderLoadAndSave(t *testing.T) {
 	}
 
 	// 3. Load the saved config
-	loaded, err := loader.Load()
+	loaded, err := store.Load()
 	if err != nil {
 		t.Fatalf("unexpected error loading saved config: %v", err)
 	}
@@ -106,20 +106,20 @@ func TestLoaderLoadAndSave(t *testing.T) {
 	if loaded.Preferences["theme"] != "dark" {
 		t.Errorf("expected preference theme to be 'dark', got %q", loaded.Preferences["theme"])
 	}
-	ctx, exists := loaded.Contexts["staging"]
+	ws, exists := loaded.Workspaces["staging"]
 	if !exists {
-		t.Fatal("expected staging context to exist")
+		t.Fatal("expected staging workspace to exist")
 	}
-	if ctx.Provider != "aws" {
-		t.Errorf("expected provider to be 'aws', got %q", ctx.Provider)
+	if ws.Provider != "aws" {
+		t.Errorf("expected provider to be 'aws', got %q", ws.Provider)
 	}
-	if ctx.Raw["profile"] != "staging-admin" {
-		t.Errorf("expected profile to be 'staging-admin', got %v", ctx.Raw["profile"])
+	if ws.Raw["profile"] != "staging-admin" {
+		t.Errorf("expected profile to be 'staging-admin', got %v", ws.Raw["profile"])
 	}
 
 	// 4. Save invalid config (should fail validation)
 	loaded.Version = "3.0"
-	err = loader.Save(loaded)
+	err = store.Save(loaded)
 	if err == nil {
 		t.Error("expected saving version 3.0 to fail, but it succeeded")
 	}
@@ -130,7 +130,7 @@ func TestLoaderLoadAndSave(t *testing.T) {
 		t.Fatalf("failed to write malformed config file: %v", err)
 	}
 
-	_, err = loader.Load()
+	_, err = store.Load()
 	if err == nil {
 		t.Error("expected loading malformed yaml to fail, but it succeeded")
 	}

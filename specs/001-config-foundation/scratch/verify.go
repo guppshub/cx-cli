@@ -31,7 +31,7 @@ func main() {
 			log.Fatalf("Error loading config: %v", err)
 		}
 		fmt.Printf("Loaded Config Version: %s\n", cfg.Version)
-		fmt.Printf("Contexts count: %d\n", len(cfg.Contexts))
+		fmt.Printf("Workspaces count: %d\n", len(cfg.Workspaces))
 	case "save-default":
 		cfg := config.Default()
 		err := config.Save(cfg)
