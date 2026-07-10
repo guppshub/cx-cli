@@ -1,0 +1,28 @@
+version: "3"
+
+tasks:
+  build:
+    cmds:
+      - go build ./...
+
+  test:
+    cmds:
+      - go test -race ./...
+
+  lint:
+    cmds:
+      - golangci-lint run
+
+  fmt:
+    cmds:
+      - gofmt -w .
+
+  check:
+    cmds:
+      - task: fmt
+      - task: lint
+      - task: test
+
+  run:
+    cmds:
+      - go run .
