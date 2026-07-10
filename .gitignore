@@ -8,6 +8,10 @@
 *.so
 *.dylib
 /cx-cli
+/.obsidian/
+/.agy/
+
+
 
 
 # Test binary, built with `go test -c`
