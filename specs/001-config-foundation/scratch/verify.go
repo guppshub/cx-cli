@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/guppshub/cx-cli/internal/config"
+	"github.com/guppshub/cx-cli/internal/state"
 )
 
 func main() {
@@ -18,7 +19,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("Error getting config path: %v", err)
 		}
-		sPath, err := config.StatePath()
+		sPath, err := state.Path()
 		if err != nil {
 			log.Fatalf("Error getting state path: %v", err)
 		}

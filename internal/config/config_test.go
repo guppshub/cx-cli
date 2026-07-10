@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestPathAndStatePath(t *testing.T) {
+func TestPath(t *testing.T) {
 	cPath, err := Path()
 	if err != nil {
 		t.Fatalf("unexpected error from Path(): %v", err)
@@ -14,26 +14,12 @@ func TestPathAndStatePath(t *testing.T) {
 	if filepath.Base(cPath) != "config.yaml" {
 		t.Errorf("expected config file name to be config.yaml, got %s", filepath.Base(cPath))
 	}
-
-	statePath, err := StatePath()
-	if err != nil {
-		t.Fatalf("unexpected error from StatePath(): %v", err)
-	}
-	if filepath.Base(statePath) != "state.json" {
-		t.Errorf("expected state file name to be state.json, got %s", filepath.Base(statePath))
-	}
-
-	cDir := filepath.Dir(cPath)
-	sDir := filepath.Dir(statePath)
-	if cDir == sDir {
-		t.Errorf("config and state directories MUST remain separate, both resolved to %s", cDir)
-	}
 }
 
 func TestDefault(t *testing.T) {
 	cfg := Default()
-	if cfg.Version != "1" {
-		t.Errorf("expected default version to be '1', got %q", cfg.Version)
+	if cfg.Version != Version {
+		t.Errorf("expected default version to be %q, got %q", Version, cfg.Version)
 	}
 	if cfg.Contexts == nil || len(cfg.Contexts) != 0 {
 		t.Errorf("expected empty contexts map, got %v", cfg.Contexts)
@@ -68,44 +54,49 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func TestLoadAndSave(t *testing.T) {
+func TestLoaderLoadAndSave(t *testing.T) {
 	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
 
-	// Override standard config path resolution for tests
-	configPathOverride = filepath.Join(tmpDir, "config.yaml")
-	statePathOverride = filepath.Join(tmpDir, "state.json")
-	defer func() {
-		configPathOverride = ""
-		statePathOverride = ""
-	}()
+	loader := New(configPath)
 
 	// 1. Load when file does not exist (should return Default and not create file)
-	cfg, err := Load()
+	cfg, err := loader.Load()
 	if err != nil {
 		t.Fatalf("unexpected error loading non-existent config: %v", err)
 	}
-	if cfg.Version != "1" {
-		t.Errorf("expected version to be '1', got %q", cfg.Version)
+	if cfg.Version != Version {
+		t.Errorf("expected version to be %q, got %q", Version, cfg.Version)
 	}
-	if _, err := os.Stat(configPathOverride); !os.IsNotExist(err) {
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 		t.Errorf("expected config file NOT to be created on load, but os.Stat returned: %v", err)
 	}
 
 	// 2. Save a custom config
 	cfg.Version = "1.0"
 	cfg.Preferences["theme"] = "dark"
-	err = Save(cfg)
+	
+	// Add context with raw generic map
+	cfg.Contexts["staging"] = &Context{
+		Provider: "aws",
+		Raw: map[string]any{
+			"profile": "staging-admin",
+			"region":  "us-east-1",
+		},
+	}
+
+	err = loader.Save(cfg)
 	if err != nil {
 		t.Fatalf("unexpected error saving config: %v", err)
 	}
 
 	// Verify file is created
-	if _, err := os.Stat(configPathOverride); err != nil {
+	if _, err := os.Stat(configPath); err != nil {
 		t.Fatalf("expected config file to be created on save, but got error: %v", err)
 	}
 
 	// 3. Load the saved config
-	loaded, err := Load()
+	loaded, err := loader.Load()
 	if err != nil {
 		t.Fatalf("unexpected error loading saved config: %v", err)
 	}
@@ -115,21 +106,31 @@ func TestLoadAndSave(t *testing.T) {
 	if loaded.Preferences["theme"] != "dark" {
 		t.Errorf("expected preference theme to be 'dark', got %q", loaded.Preferences["theme"])
 	}
+	ctx, exists := loaded.Contexts["staging"]
+	if !exists {
+		t.Fatal("expected staging context to exist")
+	}
+	if ctx.Provider != "aws" {
+		t.Errorf("expected provider to be 'aws', got %q", ctx.Provider)
+	}
+	if ctx.Raw["profile"] != "staging-admin" {
+		t.Errorf("expected profile to be 'staging-admin', got %v", ctx.Raw["profile"])
+	}
 
 	// 4. Save invalid config (should fail validation)
 	loaded.Version = "3.0"
-	err = Save(loaded)
+	err = loader.Save(loaded)
 	if err == nil {
 		t.Error("expected saving version 3.0 to fail, but it succeeded")
 	}
 
 	// 5. Load malformed configuration file
-	err = os.WriteFile(configPathOverride, []byte("version: 1\ninvalid_yaml: [}"), 0644)
+	err = os.WriteFile(configPath, []byte("version: 1\ninvalid_yaml: [}"), 0644)
 	if err != nil {
 		t.Fatalf("failed to write malformed config file: %v", err)
 	}
 
-	_, err = Load()
+	_, err = loader.Load()
 	if err == nil {
 		t.Error("expected loading malformed yaml to fail, but it succeeded")
 	}
