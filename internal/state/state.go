@@ -21,6 +21,7 @@ type ConnectionMetadata struct {
 	LocalPort    int    `json:"local_port"`
 	ConnectionID string `json:"connection_id"`
 	ConnectedAt  string `json:"connected_at"`
+	Pid          int    `json:"pid"`
 }
 
 // Manager manages loading and saving of the runtime state file.
@@ -39,8 +40,7 @@ func Path() (string, error) {
 		return filepath.Join(stateHome, "cx", "state.json"), nil
 	}
 
-	switch runtime.GOOS {
-	case "windows":
+	if runtime.GOOS == "windows" {
 		dir, err := os.UserCacheDir() // Returns %LOCALAPPDATA%
 		if err != nil {
 			home, err := os.UserHomeDir()
@@ -50,19 +50,14 @@ func Path() (string, error) {
 			return filepath.Join(home, "AppData", "Local", "cx", "state.json"), nil
 		}
 		return filepath.Join(dir, "cx", "state.json"), nil
-	case "darwin":
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("resolving home directory: %w", err)
-		}
-		return filepath.Join(home, "Library", "Application Support", "cx", "state", "state.json"), nil
-	default:
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("resolving home directory: %w", err)
-		}
-		return filepath.Join(home, ".local", "state", "cx", "state.json"), nil
 	}
+
+	// macOS and Linux/Unix: ~/.local/state/cx/state.json
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving home directory: %w", err)
+	}
+	return filepath.Join(home, ".local", "state", "cx", "state.json"), nil
 }
 
 // Default returns a new, valid State struct populated with default values.

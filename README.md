@@ -25,3 +25,6 @@ A workflow-oriented cloud operations CLI designed to simplify repetitive develop
 - [ ] 012 compute
 - [ ] 013 logs
 - [ ] 014 service
+
+### Phase 5 — Release & Packaging
+- [ ] Migrate repository to a dedicated GitHub Organization (e.g., `github.com/cx-cli`) to standardize import paths and decouple them from personal GitHub accounts.

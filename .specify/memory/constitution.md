@@ -61,6 +61,8 @@ Prefer composition over inheritance and small interfaces over large abstractions
 
 Do NOT introduce plugin systems, factories, generic frameworks, or excessive indirection until there is a demonstrated need.
 
+Abstractions MUST emerge from working implementations, not anticipated future needs. Proving the design with one real provider and one real workflow before generalizing interfaces avoids speculative over-design.
+
 Design for future growth without paying today's complexity cost.
 
 ### 4. Go Idioms First
@@ -116,6 +118,8 @@ Code MUST naturally support testing.
 
 Business logic MUST remain independent from infrastructure and user interfaces.
 
+Use network socket boundaries (e.g. net.Conn interfaces) to mock or encapsulate subprocesses or platform-specific connection tools rather than coupling the core application logic to them.
+
 Prefer deterministic, isolated unit tests.
 
 Critical workflows SHOULD include integration tests where appropriate.
@@ -143,6 +147,8 @@ cx-cli MUST:
 - Minimize shell execution
 - Protect against command injection
 - Follow the principle of least privilege
+
+Providers must be headless library packages. Any user interaction (such as password/MFA prompts) must be driven via functional callbacks provided by the caller, avoiding internal stdin/stdout prompts within provider packages.
 
 Security MUST be considered during design rather than added later.
 
