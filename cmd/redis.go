@@ -87,7 +87,7 @@ var redisCmd = &cobra.Command{
 		if !redisServerModeFlag {
 			// Verify bastion and SSM connectivity with a quick handshake
 			fmt.Printf("Verifying connection to bastion %s...\n", target.BastionInstanceID)
-			if err := connMgr.PreflightHandshake(ctx, awsProvider, target); err != nil {
+			if err := connMgr.PreflightHandshake(ctx, awsProvider, target, "redis"); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -167,10 +167,16 @@ var redisCmd = &cobra.Command{
 
 		// Register connection state if server daemon
 		if redisServerModeFlag {
+			if err := connection.VerifyConnection("redis", target.PreferredLocalPort, 10*time.Second); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: connection verification failed: %v\n", err)
+				cancel()
+				return
+			}
 			connID := fmt.Sprintf("cx-conn-%s-%d", redisResource.Name, target.PreferredLocalPort)
 			if err := connMgr.RegisterState("redis", redisResource.Name, target.PreferredLocalPort, connID); err != nil {
 				fmt.Fprintf(os.Stderr, "Error registering state: %v\n", err)
 				cancel()
+				return
 			}
 			defer func() {
 				_ = connMgr.DeregisterState(connID)

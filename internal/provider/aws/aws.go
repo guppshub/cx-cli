@@ -174,6 +174,14 @@ func (p *Provider) EnsureCredentials(ctx context.Context, prompt func(string, bo
 }
 
 func checkAndResolvePort(port int) int {
+	if port <= 0 {
+		l, err := net.Listen("tcp", "localhost:0")
+		if err == nil {
+			defer func() { _ = l.Close() }()
+			return l.Addr().(*net.TCPAddr).Port
+		}
+		return port
+	}
 	l, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
 	if err == nil {
 		_ = l.Close()

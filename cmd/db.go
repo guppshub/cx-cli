@@ -87,7 +87,7 @@ var dbCmd = &cobra.Command{
 		if !serverModeFlag {
 			// Verify bastion and SSM connectivity with a quick handshake
 			fmt.Printf("Verifying connection to bastion %s...\n", target.BastionInstanceID)
-			if err := connMgr.PreflightHandshake(ctx, awsProvider, target); err != nil {
+			if err := connMgr.PreflightHandshake(ctx, awsProvider, target, dbResource.Engine); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -167,10 +167,16 @@ var dbCmd = &cobra.Command{
 
 		// Register connection state if server daemon
 		if serverModeFlag {
+			if err := connection.VerifyConnection(dbResource.Engine, target.PreferredLocalPort, 10*time.Second); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: connection verification failed: %v\n", err)
+				cancel()
+				return
+			}
 			connID := fmt.Sprintf("cx-conn-%s-%d", dbResource.Name, target.PreferredLocalPort)
 			if err := connMgr.RegisterState("database", dbResource.Name, target.PreferredLocalPort, connID); err != nil {
 				fmt.Fprintf(os.Stderr, "Error registering state: %v\n", err)
 				cancel()
+				return
 			}
 			defer func() {
 				_ = connMgr.DeregisterState(connID)

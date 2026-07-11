@@ -69,34 +69,33 @@ func (m *Manager) GetActiveConnection(resourceName string) (*state.ConnectionMet
 }
 
 // PreflightHandshake verifies that the target destination is reachable before starting the session.
-func (m *Manager) PreflightHandshake(ctx context.Context, dialer tunnel.Dialer, target *tunnel.Target) error {
+func (m *Manager) PreflightHandshake(ctx context.Context, dialer tunnel.Dialer, target *tunnel.Target, protocol string) error {
 	// Use a random port during handshake to prevent blocking/occupying the target port
 	handshakeTarget := *target
 	handshakeTarget.PreferredLocalPort = 0
 
-	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 10*time.Second)
+	handshakeCtx, handshakeCancel := context.WithTimeout(ctx, 15*time.Second)
 	testConn, err := dialer.DialTunnel(handshakeCtx, &handshakeTarget)
 	handshakeCancel()
 	if err != nil {
 		return fmt.Errorf("connection handshake failed: %w", err)
 	}
+	defer func() { _ = testConn.Close() }()
 
-	// Wait briefly for destination connectivity/exit state propagation
-	time.Sleep(1500 * time.Millisecond)
-
-	type aliveConn interface {
-		IsAlive() bool
-		FailureMessage() string
-	}
-	if ac, ok := testConn.(aliveConn); ok && !ac.IsAlive() {
-		errMsg := ac.FailureMessage()
-		_ = testConn.Close()
-		if errMsg != "" {
-			return fmt.Errorf("connection handshake failed:\n%s", errMsg)
+	// Verify connection over the bound port using our native verifier
+	err = VerifyConnection(protocol, handshakeTarget.PreferredLocalPort, 10*time.Second)
+	if err != nil {
+		// If verification fails, read any exit/failure output of the process if available
+		type failureConn interface {
+			FailureMessage() string
 		}
-		return fmt.Errorf("connection handshake failed: remote destination is unreachable or details are incorrect")
+		if fc, ok := testConn.(failureConn); ok {
+			if errMsg := fc.FailureMessage(); errMsg != "" {
+				return fmt.Errorf("connection verification failed:\n%s", errMsg)
+			}
+		}
+		return fmt.Errorf("connection verification failed: %w", err)
 	}
 
-	_ = testConn.Close()
 	return nil
 }
