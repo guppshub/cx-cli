@@ -106,3 +106,15 @@ func TestDialTunnelLookPathChecks(t *testing.T) {
 		t.Error("expected DialTunnel to fail when binaries are missing, but it succeeded")
 	}
 }
+
+func TestFetchEC2InstancesLookPathChecks(t *testing.T) {
+	provider := New("default", "us-east-1")
+	provider.lookPathFunc = func(file string) (string, error) {
+		return "", exec.ErrNotFound
+	}
+
+	_, err := provider.FetchEC2Instances(context.Background())
+	if err == nil {
+		t.Error("expected FetchEC2Instances to fail when aws CLI is missing, but it succeeded")
+	}
+}

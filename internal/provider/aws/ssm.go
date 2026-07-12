@@ -1,0 +1,35 @@
+package aws
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+)
+
+// ConnectSSM establishes an interactive terminal SSM session to the target instance.
+func (p *Provider) ConnectSSM(instanceID string) error {
+	// Verify dependencies
+	if _, err := p.lookPathFunc("aws"); err != nil {
+		return fmt.Errorf("aws CLI not found in PATH: %w", err)
+	}
+
+	args := []string{
+		"ssm",
+		"start-session",
+		"--target", instanceID,
+	}
+
+	if p.profile != "" {
+		args = append(args, "--profile", p.profile)
+	}
+	if p.region != "" {
+		args = append(args, "--region", p.region)
+	}
+
+	cmd := exec.Command("aws", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
