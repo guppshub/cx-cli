@@ -294,7 +294,7 @@ func (p *Provider) DialTunnel(ctx context.Context, target *tunnel.Target) (net.C
 	success := false
 	var sessionID string
 
-	scanCtx, scanCancel := context.WithTimeout(ctx, 5*time.Second)
+	scanCtx, scanCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer scanCancel()
 
 	errChan := make(chan error, 1)
