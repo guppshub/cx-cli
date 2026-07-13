@@ -24,23 +24,23 @@ workspaces:
     region: us-east-1
 
     # Optional: Default Bastion host instance ID used for tunneling if not specified per-resource
-    bastion_instance_id: i-0d1d909c5fea48c31
+    bastion_instance_id: i-0123456789abcdef0
 
     # Catalog of secure resources accessible through the bastion
     resources:
       # Database resources (connect via: cx db <name>)
       databases:
-        - name: mercury
+        - name: sample-postgres
           engine: postgres # Supported engines: postgres, mysql
-          endpoint: dev-db-cluster.ckkwsfwzdc3c.us-east-1.rds.amazonaws.com
+          endpoint: postgres.example.com
           port: 5432
           local_port: 5432 # Preferred local port to bind to
           # Optional: bastion_instance_id override
 
       # Redis cache resources (connect via: cx redis <name>)
       redis:
-        - name: sequr-cache
-          host: dev-cache.dfklpu.0001.use1.cache.amazonaws.com
+        - name: sample-redis
+          host: redis.example.com
           port: 6379
           local_port: 6379
           # Optional: bastion_instance_id override

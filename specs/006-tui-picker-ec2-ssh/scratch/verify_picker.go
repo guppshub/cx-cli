@@ -9,7 +9,7 @@ import (
 
 func main() {
 	items := []picker.Row{
-		{ID: "i-0d1d909c5fea48c31", Fields: []string{"bastion-prod", "i-0d1d909c5fea48c31", "running", "10.0.1.25"}},
+		{ID: "i-0123456789abcdef0", Fields: []string{"bastion-prod", "i-0123456789abcdef0", "running", "10.0.1.25"}},
 		{ID: "i-09f87c4f1c901844a", Fields: []string{"payment-worker", "i-09f87c4f1c901844a", "running", "10.0.1.86"}},
 		{ID: "i-08a9f24300bfecb21", Fields: []string{"analytics-node", "i-08a9f24300bfecb21", "stopped", "10.0.2.14"}},
 		{ID: "i-07c8efb132a0d18bc", Fields: []string{"redis-maintenance", "i-07c8efb132a0d18bc", "running", "10.0.3.41"}},

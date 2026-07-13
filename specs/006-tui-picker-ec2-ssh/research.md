@@ -20,7 +20,7 @@ aws ec2 describe-instances \
   [
     {
       "Name": "bastion-prod",
-      "InstanceId": "i-0d1d909c5fea48c31",
+      "InstanceId": "i-0123456789abcdef0",
       "State": "running",
       "PrivateIpAddress": "10.0.1.25"
     },
