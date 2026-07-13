@@ -86,7 +86,7 @@ func (c *ProcessConn) Write(b []byte) (int, error) {
 // Close terminates the background process and closes standard streams.
 func (c *ProcessConn) Close() error {
 	if c.provider != nil && c.sessionID != "" {
-		c.provider.terminateSession(c.sessionID)
+		c.provider.TerminateSession(c.sessionID)
 	}
 
 	_ = c.stdin.Close()
@@ -177,8 +177,8 @@ func (p *Provider) EnsureCredentials(ctx context.Context, prompt func(string, bo
 	return nil
 }
 
-// terminateSession explicitly terminates the active session on AWS SSM.
-func (p *Provider) terminateSession(sessionID string) {
+// TerminateSession explicitly terminates the active session on AWS SSM.
+func (p *Provider) TerminateSession(sessionID string) {
 	if sessionID == "" {
 		return
 	}

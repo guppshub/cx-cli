@@ -40,6 +40,7 @@ type Metadata struct {
 	StartedAt   time.Time       `json:"started_at"`
 	LastFailure string          `json:"last_failure"`
 	LastRestart time.Time       `json:"last_restart"`
+	SessionID   string          `json:"session_id"`
 }
 
 // Supervisor manages the complete lifecycle of a long-running connection.
@@ -172,6 +173,9 @@ func (s *Supervisor) run(ctx context.Context) {
 		s.meta.PID = conn.PID()
 		s.meta.Port = conn.Port()
 		s.meta.StartedAt = time.Now().UTC()
+		if si, ok := conn.(interface{ SessionID() string }); ok {
+			s.meta.SessionID = si.SessionID()
+		}
 		s.setState(StateHealthy)
 		s.cfg.Policy.Reset()
 		s.mu.Unlock()

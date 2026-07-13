@@ -26,6 +26,9 @@ type ConnectionMetadata struct {
 	Restarts     int    `json:"restarts,omitempty"`
 	LastFailure  string `json:"last_failure,omitempty"`
 	LastRestart  string `json:"last_restart,omitempty"`
+	Profile      string `json:"profile,omitempty"`
+	Region       string `json:"region,omitempty"`
+	SessionID    string `json:"session_id,omitempty"`
 }
 
 // Manager manages loading and saving of the runtime state file.

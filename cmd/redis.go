@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"syscall"
 	"time"
 
@@ -114,73 +112,21 @@ var redisCmd = &cobra.Command{
 					fmt.Fprintf(os.Stderr, "Error: failed to create log directory: %v\n", err)
 					os.Exit(1)
 				}
-				logPath := filepath.Join(logDir, redisResource.Name+".log")
-				errLogPath := logPath
-				if runtime.GOOS == "windows" {
-					errLogPath = filepath.Join(logDir, redisResource.Name+"_err.log")
-				}
 
-				var logFile *os.File
-				var err error
-				if runtime.GOOS != "windows" {
-					logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error: failed to open log file: %v\n", err)
-						os.Exit(1)
-					}
-					defer func() { _ = logFile.Close() }()
-				}
-
-				var daemonCmd *exec.Cmd
-				if runtime.GOOS == "windows" {
-					psCmd := fmt.Sprintf(
-						"Start-Process -FilePath '%s' -ArgumentList 'redis', '%s', '--server', '--port', '%d' -WindowStyle Hidden -RedirectStandardOutput '%s' -RedirectStandardError '%s'",
-						os.Args[0], redisResource.Name, localPort, logPath, errLogPath,
-					)
-					daemonCmd = exec.Command("powershell", "-WindowStyle", "Hidden", "-Command", psCmd)
-				} else {
-					daemonArgs := []string{"redis", redisName, "--server", "--port", fmt.Sprint(localPort)}
-					daemonCmd = exec.Command(os.Args[0], daemonArgs...)
-					daemonCmd.Stdout = logFile
-					daemonCmd.Stderr = logFile
-					detachCmd(daemonCmd)
-				}
-
-				if err := daemonCmd.Start(); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: failed to start background daemon: %v\n", err)
+				daemon, err := connection.SpawnDaemon(os.Args[0], "redis", redisResource.Name, localPort, logDir)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error spawning background daemon: %v\n", err)
 					os.Exit(1)
 				}
 
-				// Wait for daemon to register in state.json
 				fmt.Printf("Starting background tunnel daemon for Redis %s (port %d)...\n", redisResource.Name, localPort)
-				registered := false
-				var finalLocalPort int
-
-				// Poll state file every 100ms for up to 5 seconds
-				for i := 0; i < 50; i++ {
-					time.Sleep(100 * time.Millisecond)
-					s, err := stateStore.Load()
-					if err == nil {
-						// Look for the active connection matching this Redis and PID (PID matching is omitted on Windows as powershell launches it)
-						for _, conn := range s.ActiveConnections {
-							if conn.Name == redisResource.Name && (runtime.GOOS == "windows" || conn.Pid == daemonCmd.Process.Pid) {
-								registered = true
-								finalLocalPort = conn.LocalPort
-								break
-							}
-						}
-					}
-					if registered {
-						break
-					}
-				}
-
-				if !registered {
+				finalLocalPort, err := daemon.VerifyRegistration(stateStore, 5*time.Second)
+				if err != nil {
 					fmt.Fprintln(os.Stderr, "Error: background daemon failed to initialize. Check logs:")
-					logData, _ := os.ReadFile(logPath)
+					logData, _ := os.ReadFile(daemon.LogPath())
 					fmt.Fprintf(os.Stderr, "%s\n", string(logData))
-					if errLogPath != logPath {
-						errData, _ := os.ReadFile(errLogPath)
+					if daemon.ErrorLogPath() != daemon.LogPath() {
+						errData, _ := os.ReadFile(daemon.ErrorLogPath())
 						if len(errData) > 0 {
 							fmt.Fprintf(os.Stderr, "Errors:\n%s\n", string(errData))
 						}
@@ -190,7 +136,7 @@ var redisCmd = &cobra.Command{
 
 				fmt.Printf("Success! Tunnel established in background.\n")
 				fmt.Printf("Redis %q is listening on local port %d.\n", redisResource.Name, finalLocalPort)
-				fmt.Printf("Log file: %s\n", logPath)
+				fmt.Printf("Log file: %s\n", daemon.LogPath())
 				return
 			}
 		}
@@ -209,6 +155,8 @@ var redisCmd = &cobra.Command{
 				Policy: connection.NewFixedBackoff(5*time.Second, 50),
 				Logger: logger,
 				OnStateChange: func(meta connection.Metadata) {
+					profileStr, _ := ws.Raw["profile"].(string)
+					regionStr, _ := ws.Raw["region"].(string)
 					_ = connMgr.UpdateState(connID, &state.ConnectionMetadata{
 						Type:         meta.Type,
 						Name:         meta.Name,
@@ -220,6 +168,9 @@ var redisCmd = &cobra.Command{
 						Restarts:     meta.Restarts,
 						LastFailure:  meta.LastFailure,
 						LastRestart:  meta.LastRestart.Format(time.RFC3339),
+						Profile:      profileStr,
+						Region:       regionStr,
+						SessionID:    meta.SessionID,
 					})
 				},
 			})

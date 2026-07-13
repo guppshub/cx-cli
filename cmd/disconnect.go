@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/guppshub/cx-cli/internal/connection"
+	awsprovider "github.com/guppshub/cx-cli/internal/provider/aws"
 	"github.com/guppshub/cx-cli/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -47,6 +48,12 @@ var disconnectCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Disconnecting resource %s (PID: %d)...\n", targetConn.Name, targetConn.Pid)
+
+		if targetConn.SessionID != "" {
+			fmt.Printf("Terminating AWS SSM session %s...\n", targetConn.SessionID)
+			awsProvider := awsprovider.New(targetConn.Profile, targetConn.Region)
+			awsProvider.TerminateSession(targetConn.SessionID)
+		}
 
 		// Terminate the process group gracefully (SIGINT/soft-kill first, wait up to 1.5s)
 		connection.TerminateProcessGroup(targetConn.Pid, 1500*time.Millisecond)

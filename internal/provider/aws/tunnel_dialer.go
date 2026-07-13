@@ -65,6 +65,14 @@ func (tc *TunnelConnection) Port() int {
 	return tc.port
 }
 
+// SessionID returns the AWS SSM session ID.
+func (tc *TunnelConnection) SessionID() string {
+	if tc.proc != nil {
+		return tc.proc.sessionID
+	}
+	return ""
+}
+
 // Compile-time check that TunnelConnection satisfies Connection.
 var _ connection.Connection = (*TunnelConnection)(nil)
 
