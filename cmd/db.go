@@ -115,6 +115,11 @@ var dbCmd = &cobra.Command{
 					os.Exit(1)
 				}
 				logPath := filepath.Join(logDir, dbResource.Name+".log")
+				errLogPath := logPath
+				if runtime.GOOS == "windows" {
+					errLogPath = filepath.Join(logDir, dbResource.Name+"_err.log")
+				}
+
 				var logFile *os.File
 				var err error
 				if runtime.GOOS != "windows" {
@@ -130,7 +135,7 @@ var dbCmd = &cobra.Command{
 				if runtime.GOOS == "windows" {
 					psCmd := fmt.Sprintf(
 						"Start-Process -FilePath '%s' -ArgumentList 'db', '%s', '--server', '--port', '%d' -WindowStyle Hidden -RedirectStandardOutput '%s' -RedirectStandardError '%s'",
-						os.Args[0], dbResource.Name, localPort, logPath, logPath,
+						os.Args[0], dbResource.Name, localPort, logPath, errLogPath,
 					)
 					daemonCmd = exec.Command("powershell", "-WindowStyle", "Hidden", "-Command", psCmd)
 				} else {
@@ -174,6 +179,12 @@ var dbCmd = &cobra.Command{
 					fmt.Fprintln(os.Stderr, "Error: background daemon failed to initialize. Check logs:")
 					logData, _ := os.ReadFile(logPath)
 					fmt.Fprintf(os.Stderr, "%s\n", string(logData))
+					if errLogPath != logPath {
+						errData, _ := os.ReadFile(errLogPath)
+						if len(errData) > 0 {
+							fmt.Fprintf(os.Stderr, "Errors:\n%s\n", string(errData))
+						}
+					}
 					os.Exit(1)
 				}
 
