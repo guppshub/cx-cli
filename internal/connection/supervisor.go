@@ -171,6 +171,7 @@ func (s *Supervisor) run(ctx context.Context) {
 		s.conn = conn
 		s.meta.PID = conn.PID()
 		s.meta.Port = conn.Port()
+		s.meta.StartedAt = time.Now().UTC()
 		s.setState(StateHealthy)
 		s.cfg.Policy.Reset()
 		s.mu.Unlock()
