@@ -68,12 +68,13 @@ TARGET_PATH="${INSTALL_DIR}/cx"
 
 echo "Installing to ${TARGET_PATH}..."
 
-# Check if target directory is writable
-if [ -w "$INSTALL_DIR" ]; then
+# Check if target directory exists and is writable
+if [ -d "$INSTALL_DIR" ] && [ -w "$INSTALL_DIR" ]; then
     mv "$TEMP_BIN" "$TARGET_PATH"
     chmod +x "$TARGET_PATH"
 else
     echo "Requires administrator privileges to install in ${INSTALL_DIR}."
+    sudo mkdir -p "$INSTALL_DIR"
     sudo mv "$TEMP_BIN" "$TARGET_PATH"
     sudo chmod +x "$TARGET_PATH"
 fi
