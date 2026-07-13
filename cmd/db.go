@@ -115,24 +115,31 @@ var dbCmd = &cobra.Command{
 					os.Exit(1)
 				}
 				logPath := filepath.Join(logDir, dbResource.Name+".log")
-				logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: failed to open log file: %v\n", err)
-					os.Exit(1)
+				var logFile *os.File
+				var err error
+				if runtime.GOOS != "windows" {
+					logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error: failed to open log file: %v\n", err)
+						os.Exit(1)
+					}
+					defer func() { _ = logFile.Close() }()
 				}
-				defer func() { _ = logFile.Close() }()
 
 				var daemonCmd *exec.Cmd
 				if runtime.GOOS == "windows" {
-					psCmd := fmt.Sprintf("& '%s' db %s --server --port %d", os.Args[0], dbResource.Name, localPort)
+					psCmd := fmt.Sprintf(
+						"Start-Process -FilePath '%s' -ArgumentList 'db', '%s', '--server', '--port', '%d' -WindowStyle Hidden -RedirectStandardOutput '%s' -RedirectStandardError '%s'",
+						os.Args[0], dbResource.Name, localPort, logPath, logPath,
+					)
 					daemonCmd = exec.Command("powershell", "-WindowStyle", "Hidden", "-Command", psCmd)
 				} else {
 					daemonArgs := []string{"db", dbName, "--server", "--port", fmt.Sprint(localPort)}
 					daemonCmd = exec.Command(os.Args[0], daemonArgs...)
+					daemonCmd.Stdout = logFile
+					daemonCmd.Stderr = logFile
+					detachCmd(daemonCmd)
 				}
-				daemonCmd.Stdout = logFile
-				daemonCmd.Stderr = logFile
-				detachCmd(daemonCmd)
 
 				if err := daemonCmd.Start(); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: failed to start background daemon: %v\n", err)
