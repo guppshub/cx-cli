@@ -7,10 +7,13 @@ import (
 	"syscall"
 )
 
-const detachedProcess = 0x00000008
+const (
+	createNewConsole = 0x00000010
+	createNoWindow   = 0x08000000
+)
 
 func detachCmd(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | detachedProcess,
+		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | createNewConsole | createNoWindow,
 	}
 }
