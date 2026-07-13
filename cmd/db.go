@@ -172,6 +172,7 @@ var dbCmd = &cobra.Command{
 
 		// 4. Server mode: use supervisor with auto-reconnection
 		if serverModeFlag {
+			connection.IgnoreUserSignals()
 			connID := fmt.Sprintf("cx-conn-%s-%d", dbResource.Name, target.PreferredLocalPort)
 			logger := log.New(os.Stderr, "", log.LstdFlags)
 			dialer := awsprovider.NewTunnelDialer(awsProvider, target)

@@ -56,3 +56,7 @@ func TerminateProcessGroup(pid int, timeout time.Duration) {
 	killCmdForce := exec.Command("taskkill", "/T", "/F", "/PID", fmt.Sprintf("%d", pid))
 	_ = killCmdForce.Run()
 }
+
+// IgnoreUserSignals is a no-op on Windows.
+func IgnoreUserSignals() {
+}

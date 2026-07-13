@@ -172,6 +172,7 @@ var redisCmd = &cobra.Command{
 
 		// 4. Server mode: use supervisor with auto-reconnection
 		if redisServerModeFlag {
+			connection.IgnoreUserSignals()
 			connID := fmt.Sprintf("cx-conn-%s-%d", redisResource.Name, target.PreferredLocalPort)
 			logger := log.New(os.Stderr, "", log.LstdFlags)
 			dialer := awsprovider.NewTunnelDialer(awsProvider, target)

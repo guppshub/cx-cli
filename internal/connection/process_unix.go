@@ -4,6 +4,7 @@ package connection
 
 import (
 	"os"
+	"os/signal"
 	"syscall"
 	"time"
 )
@@ -50,4 +51,9 @@ func TerminateProcessGroup(pid int, timeout time.Duration) {
 
 	// 2. Fallback to SIGKILL
 	_ = syscall.Kill(pgid, syscall.SIGKILL)
+}
+
+// IgnoreUserSignals configures the daemon process to ignore terminal hangup signals (SIGHUP) on Unix.
+func IgnoreUserSignals() {
+	signal.Ignore(syscall.SIGHUP)
 }
