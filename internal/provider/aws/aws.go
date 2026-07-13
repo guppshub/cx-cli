@@ -338,7 +338,11 @@ func (p *Provider) DialTunnel(ctx context.Context, target *tunnel.Target) (net.C
 		_ = cmd.Process.Kill()
 		_ = stdin.Close()
 		_ = stdout.Close()
-		return nil, fmt.Errorf("connection handshake timed out: %s", strings.TrimSpace(stderrBuf.String()))
+		errMsg := strings.TrimSpace(stderrBuf.String())
+		if errMsg == "" {
+			errMsg = strings.TrimSpace(accumulated.String())
+		}
+		return nil, fmt.Errorf("connection handshake timed out: %s", errMsg)
 	case err := <-errChan:
 		if !success {
 			_ = cmd.Process.Kill()
