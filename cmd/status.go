@@ -53,14 +53,20 @@ var statusCmd = &cobra.Command{
 			return
 		}
 
-		fmt.Println("Active Database Tunnels:")
-		fmt.Printf("%-15s %-10s %-12s %-8s %-20s\n", "DATABASE", "TYPE", "LOCAL PORT", "PID", "CONNECTED AT")
+		fmt.Println("Active Tunnels:")
+		fmt.Printf("%-15s %-10s %-12s %-12s %-8s %-10s %-20s\n", "NAME", "TYPE", "STATE", "LOCAL PORT", "PID", "RESTARTS", "CONNECTED AT")
 		for _, conn := range active {
-			fmt.Printf("%-15s %-10s %-12d %-8d %-20s\n",
+			connState := conn.State
+			if connState == "" {
+				connState = "Healthy"
+			}
+			fmt.Printf("%-15s %-10s %-12s %-12d %-8d %-10d %-20s\n",
 				conn.Name,
 				conn.Type,
+				connState,
 				conn.LocalPort,
 				conn.Pid,
+				conn.Restarts,
 				conn.ConnectedAt,
 			)
 		}

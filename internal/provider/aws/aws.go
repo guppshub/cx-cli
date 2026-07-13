@@ -9,9 +9,11 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/guppshub/cx-cli/internal/state"
 	"github.com/guppshub/cx-cli/internal/tunnel"
 )
 
@@ -22,33 +24,20 @@ type ProcessConn struct {
 	stdout    io.Reader
 	rawStdout io.ReadCloser
 	stderrBuf *bytes.Buffer
+	sessionID string
+	provider  *Provider
 }
 
 // IsAlive checks if the underlying subprocess is still running.
+// This relies on DialTunnel's background goroutine calling cmd.Wait(),
+// which populates cmd.ProcessState as soon as the child process exits.
 func (c *ProcessConn) IsAlive() bool {
 	if c.cmd == nil || c.cmd.Process == nil {
 		return false
 	}
-
-	// Set a short read deadline of 100ms on rawStdout
-	if f, ok := c.rawStdout.(*os.File); ok {
-		_ = f.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-		defer func() { _ = f.SetReadDeadline(time.Time{}) }() // clear deadline
-	}
-
-	var oneByte [1]byte
-	_, err := c.rawStdout.Read(oneByte[:])
-	if err != nil {
-		if os.IsTimeout(err) {
-			return true
-		}
-		if err == io.EOF || strings.Contains(err.Error(), "closed") {
-			return false
-		}
+	if c.cmd.ProcessState != nil {
 		return false
 	}
-
-	// If we read 1 byte, it's alive!
 	return true
 }
 
@@ -96,8 +85,23 @@ func (c *ProcessConn) Write(b []byte) (int, error) {
 
 // Close terminates the background process and closes standard streams.
 func (c *ProcessConn) Close() error {
+	if c.provider != nil && c.sessionID != "" {
+		c.provider.terminateSession(c.sessionID)
+	}
+
 	_ = c.stdin.Close()
 	_ = c.rawStdout.Close()
+
+	// Wait up to 1.5 seconds for the process to exit naturally from EOF on stdin
+	if c.cmd != nil && c.cmd.Process != nil {
+		for i := 0; i < 30; i++ {
+			if c.cmd.ProcessState != nil {
+				return nil // Exited cleanly on EOF!
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
 	killProcessGroup(c.cmd)
 	return nil
 }
@@ -171,6 +175,44 @@ func (p *Provider) EnsureCredentials(ctx context.Context, prompt func(string, bo
 	}
 
 	return nil
+}
+
+// terminateSession explicitly terminates the active session on AWS SSM.
+func (p *Provider) terminateSession(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	args := []string{"ssm", "terminate-session", "--session-id", sessionID}
+	if p.profile != "" {
+		args = append(args, "--profile", p.profile)
+	}
+	if p.region != "" {
+		args = append(args, "--region", p.region)
+	}
+
+	cmd := exec.CommandContext(ctx, "aws", args...)
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+	err := cmd.Run()
+
+	logPath, logErr := state.Path()
+	if logErr == nil && logPath != "" {
+		logDir := filepath.Join(filepath.Dir(logPath), "logs")
+		_ = os.MkdirAll(logDir, 0755)
+		f, _ := os.OpenFile(filepath.Join(logDir, "session_cleanup.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if f != nil {
+			if err != nil {
+				_, _ = fmt.Fprintf(f, "[%s] Failed to terminate session %s: %v. Stderr: %s\n", time.Now().Format(time.RFC3339), sessionID, err, stderrBuf.String())
+			} else {
+				_, _ = fmt.Fprintf(f, "[%s] Successfully terminated session %s: %s\n", time.Now().Format(time.RFC3339), sessionID, strings.TrimSpace(stdoutBuf.String()))
+			}
+			_ = f.Close()
+		}
+	}
 }
 
 func checkAndResolvePort(port int) int {
@@ -250,6 +292,7 @@ func (p *Provider) DialTunnel(ctx context.Context, target *tunnel.Target) (net.C
 	stdoutReader := bufio.NewReader(stdout)
 	var accumulated bytes.Buffer
 	success := false
+	var sessionID string
 
 	scanCtx, scanCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer scanCancel()
@@ -260,6 +303,22 @@ func (p *Provider) DialTunnel(ctx context.Context, target *tunnel.Target) (net.C
 			line, err := stdoutReader.ReadString('\n')
 			if len(line) > 0 {
 				accumulated.WriteString(line)
+				if strings.Contains(line, "SessionId:") {
+					parts := strings.Split(line, "SessionId:")
+					if len(parts) > 1 {
+						sessionID = strings.TrimSpace(parts[1])
+					}
+				} else if strings.Contains(line, "sessionId ") {
+					parts := strings.Split(line, "sessionId ")
+					if len(parts) > 1 {
+						words := strings.Fields(parts[1])
+						if len(words) > 0 {
+							sessionID = strings.TrimFunc(words[0], func(r rune) bool {
+								return r == '.' || r == ',' || r == '"' || r == '\''
+							})
+						}
+					}
+				}
 				// Look for standard session-manager-plugin startup success keywords
 				if strings.Contains(line, "Waiting for connections") {
 					success = true
@@ -307,5 +366,7 @@ func (p *Provider) DialTunnel(ctx context.Context, target *tunnel.Target) (net.C
 		stdout:    stdoutReader,
 		rawStdout: stdout,
 		stderrBuf: &stderrBuf,
+		sessionID: sessionID,
+		provider:  p,
 	}, nil
 }

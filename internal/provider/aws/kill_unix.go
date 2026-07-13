@@ -5,6 +5,9 @@ package aws
 import (
 	"os/exec"
 	"syscall"
+	"time"
+
+	"github.com/guppshub/cx-cli/internal/connection"
 )
 
 func prepareCmd(cmd *exec.Cmd) {
@@ -18,7 +21,5 @@ func killProcessGroup(cmd *exec.Cmd) {
 	if cmd.Process == nil {
 		return
 	}
-	// The PGID is equal to the leader's PID when Setpgid is true.
-	// We send SIGKILL to -Pid to target the entire process group.
-	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	connection.TerminateProcessGroup(cmd.Process.Pid, 2000*time.Millisecond)
 }

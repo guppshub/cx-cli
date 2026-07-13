@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/guppshub/cx-cli/internal/connection"
+	awsprovider "github.com/guppshub/cx-cli/internal/provider/aws"
 	"github.com/guppshub/cx-cli/internal/resource"
 	"github.com/guppshub/cx-cli/internal/state"
 	"github.com/guppshub/cx-cli/internal/tunnel"
@@ -60,9 +62,20 @@ var dbCmd = &cobra.Command{
 		if !serverModeFlag {
 			conn, err := connMgr.GetActiveConnection(dbResource.Name)
 			if err == nil && conn != nil {
-				fmt.Printf("Tunnel to database %q is already running in background (PID: %d).\n", conn.Name, conn.Pid)
-				fmt.Printf("Database %q is listening on local port %d.\n", conn.Name, conn.LocalPort)
-				return
+				// If the connection is not in a healthy or recovering state, we clean it up and restart
+				if conn.State == string(connection.StateStopped) || conn.State == string(connection.StateFailed) {
+					fmt.Printf("Existing tunnel for %q is in %s state. Cleaning up and restarting...\n", dbResource.Name, conn.State)
+					connection.TerminateProcessGroup(conn.Pid, 1000*time.Millisecond)
+					_ = connMgr.DeregisterState(conn.ConnectionID)
+				} else {
+					stateStr := conn.State
+					if stateStr == "" {
+						stateStr = "Healthy"
+					}
+					fmt.Printf("Tunnel to database %q is already running in background (PID: %d, State: %s).\n", conn.Name, conn.Pid, stateStr)
+					fmt.Printf("Database %q is listening on local port %d.\n", conn.Name, conn.LocalPort)
+					return
+				}
 			}
 		}
 
@@ -157,7 +170,47 @@ var dbCmd = &cobra.Command{
 			}
 		}
 
-		// 4. Run the tunnel natively
+		// 4. Server mode: use supervisor with auto-reconnection
+		if serverModeFlag {
+			connID := fmt.Sprintf("cx-conn-%s-%d", dbResource.Name, target.PreferredLocalPort)
+			logger := log.New(os.Stderr, "", log.LstdFlags)
+			dialer := awsprovider.NewTunnelDialer(awsProvider, target)
+
+			sv := connection.NewSupervisor(connection.SupervisorConfig{
+				Name:   dbResource.Name,
+				Type:   "database",
+				Dialer: dialer,
+				Policy: connection.NewFixedBackoff(5*time.Second, 50),
+				Logger: logger,
+				OnStateChange: func(meta connection.Metadata) {
+					_ = connMgr.UpdateState(connID, &state.ConnectionMetadata{
+						Type:         meta.Type,
+						Name:         meta.Name,
+						LocalPort:    meta.Port,
+						ConnectionID: connID,
+						ConnectedAt:  meta.StartedAt.Format(time.RFC3339),
+						Pid:          os.Getpid(),
+						State:        string(meta.State),
+						Restarts:     meta.Restarts,
+						LastFailure:  meta.LastFailure,
+						LastRestart:  meta.LastRestart.Format(time.RFC3339),
+					})
+				},
+			})
+
+			if err := sv.Start(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "Error starting supervisor: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Wait for stop signal, then gracefully shut down
+			<-ctx.Done()
+			sv.Stop()
+			_ = connMgr.DeregisterState(connID)
+			return
+		}
+
+		// 5. Foreground mode: direct tunnel
 		tunnelConn, err := awsProvider.DialTunnel(ctx, target)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error starting tunnel: %v\n", err)
@@ -165,31 +218,11 @@ var dbCmd = &cobra.Command{
 		}
 		defer func() { _ = tunnelConn.Close() }()
 
-		// Register connection state if server daemon
-		if serverModeFlag {
-			if err := connection.VerifyConnection(dbResource.Engine, target.PreferredLocalPort, 10*time.Second); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: connection verification failed: %v\n", err)
-				cancel()
-				return
-			}
-			connID := fmt.Sprintf("cx-conn-%s-%d", dbResource.Name, target.PreferredLocalPort)
-			if err := connMgr.RegisterState("database", dbResource.Name, target.PreferredLocalPort, connID); err != nil {
-				fmt.Fprintf(os.Stderr, "Error registering state: %v\n", err)
-				cancel()
-				return
-			}
-			defer func() {
-				_ = connMgr.DeregisterState(connID)
-			}()
-		} else {
-			fmt.Printf("Tunneling database %s (%s) through local port %d...\n", dbResource.Name, dbResource.Engine, target.PreferredLocalPort)
-			fmt.Println("Press Ctrl+C to terminate connection.")
-		}
+		fmt.Printf("Tunneling database %s (%s) through local port %d...\n", dbResource.Name, dbResource.Engine, target.PreferredLocalPort)
+		fmt.Println("Press Ctrl+C to terminate connection.")
 
 		<-ctx.Done()
-		if !serverModeFlag {
-			fmt.Println("Terminating tunnel connection...")
-		}
+		fmt.Println("Terminating tunnel connection...")
 	},
 }
 

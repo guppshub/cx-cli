@@ -52,6 +52,18 @@ func (m *Manager) DeregisterState(connID string) error {
 	return m.stateStore.Save(s)
 }
 
+// UpdateState updates an existing connection's metadata in state.json.
+// This is used by the Supervisor to persist state transitions, restart counts, and failure messages.
+func (m *Manager) UpdateState(connID string, meta *state.ConnectionMetadata) error {
+	s, err := m.stateStore.Load()
+	if err != nil {
+		return err
+	}
+
+	s.ActiveConnections[connID] = meta
+	return m.stateStore.Save(s)
+}
+
 // GetActiveConnection checks if an active and alive connection already exists for the resource.
 func (m *Manager) GetActiveConnection(resourceName string) (*state.ConnectionMetadata, error) {
 	s, err := m.stateStore.Load()

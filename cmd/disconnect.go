@@ -3,9 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"syscall"
 	"time"
 
+	"github.com/guppshub/cx-cli/internal/connection"
 	"github.com/guppshub/cx-cli/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -48,18 +48,8 @@ var disconnectCmd = &cobra.Command{
 
 		fmt.Printf("Disconnecting resource %s (PID: %d)...\n", targetConn.Name, targetConn.Pid)
 
-		proc, err := os.FindProcess(targetConn.Pid)
-		if err == nil {
-			// Send SIGINT so the process exits gracefully and runs its cleanup defers
-			err = proc.Signal(syscall.SIGINT)
-			if err != nil {
-				// Fallback to Kill if SIGINT fails or on Windows
-				_ = proc.Kill()
-			}
-
-			// Wait a brief moment for the process to terminate and clean up state
-			time.Sleep(200 * time.Millisecond)
-		}
+		// Terminate the process group gracefully (SIGINT/soft-kill first, wait up to 1.5s)
+		connection.TerminateProcessGroup(targetConn.Pid, 1500*time.Millisecond)
 
 		// Double check if the daemon cleaned up. If not (e.g. process crashed or killed forcibly), force clean state
 		s, err = stateStore.Load()
