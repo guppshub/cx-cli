@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -121,8 +122,14 @@ var redisCmd = &cobra.Command{
 				}
 				defer func() { _ = logFile.Close() }()
 
-				daemonArgs := []string{"redis", redisName, "--server", "--port", fmt.Sprint(localPort)}
-				daemonCmd := exec.Command(os.Args[0], daemonArgs...)
+				var daemonCmd *exec.Cmd
+				if runtime.GOOS == "windows" {
+					psCmd := fmt.Sprintf("& '%s' redis %s --server --port %d", os.Args[0], redisResource.Name, localPort)
+					daemonCmd = exec.Command("powershell", "-WindowStyle", "Hidden", "-Command", psCmd)
+				} else {
+					daemonArgs := []string{"redis", redisName, "--server", "--port", fmt.Sprint(localPort)}
+					daemonCmd = exec.Command(os.Args[0], daemonArgs...)
+				}
 				daemonCmd.Stdout = logFile
 				daemonCmd.Stderr = logFile
 				detachCmd(daemonCmd)
@@ -142,9 +149,9 @@ var redisCmd = &cobra.Command{
 					time.Sleep(100 * time.Millisecond)
 					s, err := stateStore.Load()
 					if err == nil {
-						// Look for the active connection matching this Redis and PID
+						// Look for the active connection matching this Redis and PID (PID matching is omitted on Windows as powershell launches it)
 						for _, conn := range s.ActiveConnections {
-							if conn.Name == redisResource.Name && conn.Pid == daemonCmd.Process.Pid {
+							if conn.Name == redisResource.Name && (runtime.GOOS == "windows" || conn.Pid == daemonCmd.Process.Pid) {
 								registered = true
 								finalLocalPort = conn.LocalPort
 								break

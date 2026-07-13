@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -121,8 +122,14 @@ var dbCmd = &cobra.Command{
 				}
 				defer func() { _ = logFile.Close() }()
 
-				daemonArgs := []string{"db", dbName, "--server", "--port", fmt.Sprint(localPort)}
-				daemonCmd := exec.Command(os.Args[0], daemonArgs...)
+				var daemonCmd *exec.Cmd
+				if runtime.GOOS == "windows" {
+					psCmd := fmt.Sprintf("& '%s' db %s --server --port %d", os.Args[0], dbResource.Name, localPort)
+					daemonCmd = exec.Command("powershell", "-WindowStyle", "Hidden", "-Command", psCmd)
+				} else {
+					daemonArgs := []string{"db", dbName, "--server", "--port", fmt.Sprint(localPort)}
+					daemonCmd = exec.Command(os.Args[0], daemonArgs...)
+				}
 				daemonCmd.Stdout = logFile
 				daemonCmd.Stderr = logFile
 				detachCmd(daemonCmd)
@@ -142,9 +149,9 @@ var dbCmd = &cobra.Command{
 					time.Sleep(100 * time.Millisecond)
 					s, err := stateStore.Load()
 					if err == nil {
-						// Look for the active connection matching this DB and PID
+						// Look for the active connection matching this DB and PID (PID matching is omitted on Windows as powershell launches it)
 						for _, conn := range s.ActiveConnections {
-							if conn.Name == dbResource.Name && conn.Pid == daemonCmd.Process.Pid {
+							if conn.Name == dbResource.Name && (runtime.GOOS == "windows" || conn.Pid == daemonCmd.Process.Pid) {
 								registered = true
 								finalLocalPort = conn.LocalPort
 								break
