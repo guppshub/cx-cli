@@ -125,6 +125,11 @@ func (s *Supervisor) Wait() {
 	<-s.stopped
 }
 
+// Done returns a channel that is closed when the supervisor exits.
+func (s *Supervisor) Done() <-chan struct{} {
+	return s.stopped
+}
+
 // setState transitions state and triggers the callback.
 func (s *Supervisor) setState(newState ConnectionState) {
 	s.state = newState
@@ -220,7 +225,16 @@ func (s *Supervisor) monitor(conn Connection) error {
 			_ = conn.Close()
 			return nil
 		case err := <-errChan:
-			return err
+			// Check if we were stopped by the user
+			select {
+			case <-s.stopChan:
+				return nil
+			default:
+				if err == nil {
+					return fmt.Errorf("tunnel process exited unexpectedly")
+				}
+				return err
+			}
 		case <-tickerCh:
 			// Run active TCP liveness check to handle silent session drops/zombies
 			if !s.checkLiveness(conn) {

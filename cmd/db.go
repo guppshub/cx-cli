@@ -203,9 +203,12 @@ var dbCmd = &cobra.Command{
 				os.Exit(1)
 			}
 
-			// Wait for stop signal, then gracefully shut down
-			<-ctx.Done()
-			sv.Stop()
+			// Wait for stop signal or supervisor exit
+			select {
+			case <-ctx.Done():
+				sv.Stop()
+			case <-sv.Done():
+			}
 			_ = connMgr.DeregisterState(connID)
 			return
 		}
