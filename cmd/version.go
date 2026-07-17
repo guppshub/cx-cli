@@ -23,12 +23,9 @@ var versionCmd = &cobra.Command{
 	},
 }
 
-// FormatVersionString returns a formatted version string, dropping metadata if it is unknown.
+// FormatVersionString returns a formatted version string.
 func FormatVersionString() string {
-	if CommitSHA == "unknown" && BuildTime == "unknown" {
-		return fmt.Sprintf("cx %s", Version)
-	}
-	return fmt.Sprintf("cx %s (commit: %s, built: %s)", Version, CommitSHA, BuildTime)
+	return fmt.Sprintf("cx %s", Version)
 }
 
 func init() {
