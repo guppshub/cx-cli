@@ -7,8 +7,8 @@ import (
 	"os/signal"
 )
 
-// ConnectSSM establishes an interactive terminal SSM session to the target instance.
-func (p *Provider) ConnectSSM(instanceID string) error {
+// ConnectSSM establishes an interactive terminal SSM session to the target instance, optionally running a startup command.
+func (p *Provider) ConnectSSM(instanceID string, startupCmd string) error {
 	// Verify dependencies
 	if _, err := p.lookPathFunc("aws"); err != nil {
 		return fmt.Errorf("aws CLI not found in PATH: %w", err)
@@ -18,6 +18,13 @@ func (p *Provider) ConnectSSM(instanceID string) error {
 		"ssm",
 		"start-session",
 		"--target", instanceID,
+	}
+
+	if startupCmd != "" {
+		args = append(args,
+			"--document-name", "AWS-StartInteractiveCommand",
+			"--parameters", fmt.Sprintf("command=%s", startupCmd),
+		)
 	}
 
 	if p.profile != "" {

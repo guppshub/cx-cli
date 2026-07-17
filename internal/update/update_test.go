@@ -186,5 +186,3 @@ func TestSelfUpdate(t *testing.T) {
 		t.Logf(".old file remained, this is acceptable if OS locks were simulated, but check if we can remove it manually")
 	}
 }
-
-

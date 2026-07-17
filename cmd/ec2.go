@@ -18,7 +18,7 @@ var ec2Cmd = &cobra.Command{
 		ctx := context.Background()
 
 		// 1. Initialize AWS provider
-		awsProvider, _, err := initAWSProvider(ctx, false)
+		awsProvider, ws, err := initAWSProvider(ctx, false)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -84,8 +84,17 @@ var ec2Cmd = &cobra.Command{
 		}
 
 		// 5. Connect via SSM
+		startupCmd := ec2CommandFlag
+		if startupCmd == "" && ws != nil {
+			if val, ok := ws.Raw["ec2_startup_command"].(string); ok {
+				startupCmd = val
+			} else if val, ok := ws.Raw["startup_command"].(string); ok {
+				startupCmd = val
+			}
+		}
+
 		fmt.Printf("Connecting to %s (%s) via SSM...\n", targetInst.Name, targetInst.InstanceID)
-		err = awsProvider.ConnectSSM(targetInst.InstanceID)
+		err = awsProvider.ConnectSSM(targetInst.InstanceID, startupCmd)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: connection failed: %v\n", err)
 			os.Exit(1)
@@ -93,6 +102,9 @@ var ec2Cmd = &cobra.Command{
 	},
 }
 
+var ec2CommandFlag string
+
 func init() {
+	ec2Cmd.Flags().StringVarP(&ec2CommandFlag, "command", "c", "", "Command to execute upon starting the interactive session")
 	rootCmd.AddCommand(ec2Cmd)
 }

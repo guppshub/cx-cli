@@ -53,3 +53,25 @@ To perform a non-interactive update (e.g., in CI or automation scripts):
 ```bash
 cx update --yes
 ```
+
+### Connect to EC2 via SSM
+To list and connect to an EC2 instance in the active workspace:
+```bash
+cx ec2
+```
+To execute a specific command upon starting the interactive session (e.g., automatically switching to user `ubuntu` and changing directory to their home folder):
+```bash
+cx ec2 -c "sudo su - ubuntu"
+# Or using the long flag:
+cx ec2 --command "sudo su - ubuntu"
+```
+
+Alternatively, you can define a default startup command for the active workspace in your `~/.config/cx/config.yaml` file so you don't have to specify it on every command run:
+```yaml
+workspaces:
+  dev:
+    provider: aws
+    profile: dev-profile
+    region: us-east-1
+    ec2_startup_command: "sudo su - ubuntu"
+```

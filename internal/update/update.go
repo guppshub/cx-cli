@@ -18,9 +18,9 @@ const LatestReleaseURL = "https://api.github.com/repos/guppshub/cx-cli/releases/
 
 // GitHubRelease represents a release structure from the GitHub API.
 type GitHubRelease struct {
-	TagName    string        `json:"tag_name"`
-	Prerelease bool          `json:"prerelease"`
-	Draft      bool          `json:"draft"`
+	TagName    string         `json:"tag_name"`
+	Prerelease bool           `json:"prerelease"`
+	Draft      bool           `json:"draft"`
 	Assets     []ReleaseAsset `json:"assets"`
 }
 
@@ -58,7 +58,6 @@ func FetchLatestRelease(ctx context.Context, apiURL string) (*GitHubRelease, err
 
 	return &release, nil
 }
-
 
 // ParseVersion parses a semver string (e.g. "v1.2.3" or "1.2.3-rc1") into major, minor, patch components.
 func ParseVersion(v string) (int, int, int, error) {
@@ -211,4 +210,3 @@ func selfUpdateWithPath(ctx context.Context, downloadURL, execPath string) error
 
 	return nil
 }
-
