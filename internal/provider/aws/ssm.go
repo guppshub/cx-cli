@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 )
 
 // ConnectSSM establishes an interactive terminal SSM session to the target instance, optionally running a startup command.
@@ -21,9 +22,13 @@ func (p *Provider) ConnectSSM(instanceID string, startupCmd string) error {
 	}
 
 	if startupCmd != "" {
+		// Escape double quotes inside the command string so it is valid inside the JSON array
+		escapedCmd := strings.ReplaceAll(startupCmd, `"`, `\"`)
+		paramJSON := fmt.Sprintf(`{"command":["%s"]}`, escapedCmd)
+
 		args = append(args,
 			"--document-name", "AWS-StartInteractiveCommand",
-			"--parameters", fmt.Sprintf("command=%s", startupCmd),
+			"--parameters", paramJSON,
 		)
 	}
 
