@@ -19,8 +19,16 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version metadata for the cx CLI",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("cx version %s (commit: %s, built: %s)\n", Version, CommitSHA, BuildTime)
+		fmt.Println(FormatVersionString())
 	},
+}
+
+// FormatVersionString returns a formatted version string, dropping metadata if it is unknown.
+func FormatVersionString() string {
+	if CommitSHA == "unknown" && BuildTime == "unknown" {
+		return fmt.Sprintf("cx %s", Version)
+	}
+	return fmt.Sprintf("cx %s (commit: %s, built: %s)", Version, CommitSHA, BuildTime)
 }
 
 func init() {

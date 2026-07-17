@@ -4,7 +4,6 @@ Copyright © 2026 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -12,9 +11,9 @@ import (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "cx",
-	Short: "Workflow-oriented cloud operations CLI",
-	Long:  `cx simplifies cloud operations by exposing high-level workflows instead of cloud APIs.`,
+	Use:     "cx",
+	Short:   "Workflow-oriented cloud operations CLI",
+	Long:    `cx simplifies cloud operations by exposing high-level workflows instead of cloud APIs.`,
 	Version: Version,
 }
 
@@ -28,5 +27,5 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.SetVersionTemplate(`{{with .Name}}{{printf "%s " .}}{{end}}{{printf "version %s" .Version}}` + fmt.Sprintf(" (commit: %s, built: %s)\n", CommitSHA, BuildTime))
+	rootCmd.SetVersionTemplate(FormatVersionString() + "\n")
 }
