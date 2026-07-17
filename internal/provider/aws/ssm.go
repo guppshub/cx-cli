@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 )
 
 // ConnectSSM establishes an interactive terminal SSM session to the target instance.
@@ -30,6 +31,10 @@ func (p *Provider) ConnectSSM(instanceID string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+
+	// Ignore Ctrl+C in the host cx process so that it is handled solely by the SSM session
+	signal.Ignore(os.Interrupt)
+	defer signal.Reset(os.Interrupt)
 
 	return cmd.Run()
 }
