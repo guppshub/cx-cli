@@ -50,7 +50,17 @@ jobs:
             EXT=".exe"
           fi
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o dist/cx-${{ matrix.goos }}-${{ matrix.goarch }}${EXT} .
+          
+          TAG_VERSION="${{ github.ref_name }}"
+          if [[ ! "$TAG_VERSION" =~ ^v ]]; then
+            TAG_VERSION="v0.0.0-dev"
+          fi
+          COMMIT_SHA="${{ github.sha }}"
+          BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          
+          LDFLAGS="-X github.com/guppshub/cx-cli/cmd.Version=${TAG_VERSION} -X github.com/guppshub/cx-cli/cmd.CommitSHA=${COMMIT_SHA:0:7} -X github.com/guppshub/cx-cli/cmd.BuildTime=${BUILD_TIME}"
+          
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "$LDFLAGS" -o dist/cx-${{ matrix.goos }}-${{ matrix.goarch }}${EXT} .
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
