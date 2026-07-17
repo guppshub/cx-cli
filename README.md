@@ -28,3 +28,28 @@ A workflow-oriented cloud operations CLI designed to simplify repetitive develop
 
 ### Phase 5 — Release & Packaging
 - [ ] Migrate repository to a dedicated GitHub Organization (e.g., `github.com/cx-cli`) to standardize import paths and decouple them from personal GitHub accounts.
+
+## Usage
+
+### Check CLI Version
+To display the installed version and build metadata:
+```bash
+cx version
+# Or use the version flags on the root command:
+cx -v
+cx --version
+```
+
+### Update CLI to Latest Release
+To check if a new version is available:
+```bash
+cx update --check
+```
+To perform an interactive update:
+```bash
+cx update
+```
+To perform a non-interactive update (e.g., in CI or automation scripts):
+```bash
+cx update --yes
+```
