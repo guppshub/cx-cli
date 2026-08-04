@@ -459,7 +459,11 @@ func renderTasksTable(tasks []aws.ECSTask, serviceName string) {
 		case "UNHEALTHY":
 			healthText = redStyle.Render("UNHEALTHY")
 		default:
-			healthText = dimStyle.Render(t.HealthStatus)
+			if t.HealthStatus == "UNKNOWN" || t.HealthStatus == "" {
+				healthText = dimStyle.Render("-")
+			} else {
+				healthText = dimStyle.Render(t.HealthStatus)
+			}
 		}
 
 		var timeCol string
@@ -471,7 +475,11 @@ func renderTasksTable(tasks []aws.ECSTask, serviceName string) {
 			} else {
 				timeCol = "N/A"
 			}
-			detailCol = dimStyle.Render("Uptime")
+			if t.ContainerName != "" && t.ContainerName != "N/A" {
+				detailCol = dimStyle.Render("Container: " + t.ContainerName)
+			} else {
+				detailCol = ""
+			}
 		case "STOPPED":
 			if !t.StoppedAt.IsZero() {
 				timeCol = fmt.Sprintf("Stopped %s ago", formatDuration(time.Since(t.StoppedAt)))
