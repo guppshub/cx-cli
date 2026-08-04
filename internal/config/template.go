@@ -48,4 +48,13 @@ workspaces:
           port: 6379
           local_port: 6379
           # Optional: bastion_instance_id override
+
+      # OpenSearch domains (connect via: cx os <name>)
+      # opensearch:
+      #   - name: sample-opensearch
+      #     endpoint: search-sample-domain.us-east-1.es.amazonaws.com
+      #     port: 443
+      #     local_port: 9200
+      #     # Optional: Enable MFA and STS token caching
+      #     # mfa: true
 `

@@ -36,6 +36,13 @@ func TestECS_LookPathChecks(t *testing.T) {
 			t.Errorf("expected ErrNotFound, got %v", err)
 		}
 	})
+
+	t.Run("FetchECSLogConfig", func(t *testing.T) {
+		_, _, err := p.FetchECSLogConfig(ctx, "cluster", "service")
+		if !errors.Is(err, exec.ErrNotFound) {
+			t.Errorf("expected ErrNotFound, got %v", err)
+		}
+	})
 }
 
 func TestECS_DescribeTasksJSONParsing(t *testing.T) {
@@ -117,5 +124,75 @@ func TestECS_DescribeTasksJSONParsing(t *testing.T) {
 	}
 	if t2.Containers[0].ExitCode == nil || *t2.Containers[0].ExitCode != 1 {
 		t.Errorf("expected task 2 container exitCode 1, got %v", t2.Containers[0].ExitCode)
+	}
+}
+
+func TestECS_DescribeServicesAndTaskDefinitionJSONParsing(t *testing.T) {
+	// 1. Verify unmarshal of describe-services JSON output
+	serviceJSON := `{
+		"services": [
+			{
+				"serviceName": "mercury-ac-db-service",
+				"taskDefinition": "arn:aws:ecs:us-east-1:123456789012:task-definition/mercury-ac-db-service:5"
+			}
+		]
+	}`
+
+	var serviceOutput struct {
+		Services []struct {
+			TaskDefinition string `json:"taskDefinition"`
+		} `json:"services"`
+	}
+
+	if err := json.Unmarshal([]byte(serviceJSON), &serviceOutput); err != nil {
+		t.Fatalf("failed to unmarshal serviceJSON: %v", err)
+	}
+
+	if len(serviceOutput.Services) != 1 || serviceOutput.Services[0].TaskDefinition != "arn:aws:ecs:us-east-1:123456789012:task-definition/mercury-ac-db-service:5" {
+		t.Errorf("unexpected service output: %+v", serviceOutput)
+	}
+
+	// 2. Verify unmarshal of describe-task-definition JSON output
+	taskDefJSON := `{
+		"taskDefinition": {
+			"containerDefinitions": [
+				{
+					"name": "web-app",
+					"logConfiguration": {
+						"logDriver": "awslogs",
+						"options": {
+							"awslogs-group": "/ecs/mercury-ac-db-service",
+							"awslogs-stream-prefix": "ecs"
+						}
+					}
+				}
+			]
+		}
+	}`
+
+	var taskDefOutput struct {
+		TaskDefinition struct {
+			ContainerDefinitions []struct {
+				Name             string `json:"name"`
+				LogConfiguration struct {
+					LogDriver string            `json:"logDriver"`
+					Options   map[string]string `json:"options"`
+				} `json:"logConfiguration"`
+			} `json:"containerDefinitions"`
+		} `json:"taskDefinition"`
+	}
+
+	if err := json.Unmarshal([]byte(taskDefJSON), &taskDefOutput); err != nil {
+		t.Fatalf("failed to unmarshal taskDefJSON: %v", err)
+	}
+
+	containers := taskDefOutput.TaskDefinition.ContainerDefinitions
+	if len(containers) != 1 || containers[0].Name != "web-app" {
+		t.Fatalf("unexpected containers: %+v", containers)
+	}
+
+	cfg := containers[0].LogConfiguration
+	if cfg.LogDriver != "awslogs" || cfg.Options["awslogs-group"] != "/ecs/mercury-ac-db-service" || cfg.Options["awslogs-stream-prefix"] != "ecs" {
+		t.Errorf("unexpected log configuration option parsing: %+v", cfg)
 	}
 }

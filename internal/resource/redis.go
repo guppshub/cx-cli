@@ -50,3 +50,31 @@ func ResolveRedis(workspace *config.Workspace, name string) (*RedisResource, err
 
 	return nil, fmt.Errorf("%w: redis %q not found in workspaces configuration", errors.ErrWorkspaceNotFound, name)
 }
+
+// FetchRedis returns all Redis resources configured in the workspace.
+func FetchRedis(workspace *config.Workspace) ([]RedisResource, error) {
+	if workspace == nil || workspace.Raw == nil {
+		return nil, nil
+	}
+
+	data, err := yaml.Marshal(workspace.Raw)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling workspace configuration: %w", err)
+	}
+
+	var parsed struct {
+		Resources struct {
+			Redis []RedisResource `yaml:"redis"`
+		} `yaml:"resources"`
+	}
+
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		return nil, fmt.Errorf("parsing workspace configuration: %w", err)
+	}
+
+	for i := range parsed.Resources.Redis {
+		parsed.Resources.Redis[i].BastionInstanceID = ResolveBastion(workspace, parsed.Resources.Redis[i].BastionInstanceID)
+	}
+
+	return parsed.Resources.Redis, nil
+}

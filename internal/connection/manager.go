@@ -64,15 +64,15 @@ func (m *Manager) UpdateState(connID string, meta *state.ConnectionMetadata) err
 	return m.stateStore.Save(s)
 }
 
-// GetActiveConnection checks if an active and alive connection already exists for the resource.
-func (m *Manager) GetActiveConnection(resourceName string) (*state.ConnectionMetadata, error) {
+// GetActiveConnection checks if an active and alive connection already exists for the resource in a workspace context.
+func (m *Manager) GetActiveConnection(workspaceName, resourceName string) (*state.ConnectionMetadata, error) {
 	s, err := m.stateStore.Load()
 	if err != nil {
 		return nil, err
 	}
 
 	for _, conn := range s.ActiveConnections {
-		if conn.Name == resourceName && IsProcessAlive(conn.Pid) {
+		if conn.Workspace == workspaceName && conn.Name == resourceName && IsProcessAlive(conn.Pid) {
 			return conn, nil
 		}
 	}

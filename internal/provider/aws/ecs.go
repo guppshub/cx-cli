@@ -18,8 +18,10 @@ type ECSCluster struct {
 
 // ECSService represents an ECS service's basic metadata.
 type ECSService struct {
-	Name string
-	ARN  string
+	Name            string `json:"name"`
+	ARN             string `json:"arn"`
+	LogGroup        string `json:"log_group,omitempty"`
+	LogStreamPrefix string `json:"log_stream_prefix,omitempty"`
 }
 
 // ECSTask represents parsed ECS task status information.
@@ -250,4 +252,105 @@ func (p *Provider) listTasksByStatus(ctx context.Context, clusterName, serviceNa
 	}
 
 	return output.TaskArns, nil
+}
+
+// FetchECSLogConfig describes the service and its task definition to extract its log group configuration.
+func (p *Provider) FetchECSLogConfig(ctx context.Context, cluster, service string) (logGroup string, streamPrefix string, err error) {
+	if _, err := p.lookPathFunc("aws"); err != nil {
+		return "", "", fmt.Errorf("aws CLI not found in PATH: %w", err)
+	}
+
+	// 1. Describe service to find task definition ARN
+	args := []string{"ecs", "describe-services", "--cluster", cluster, "--services", service, "--output", "json"}
+	if p.profile != "" {
+		args = append(args, "--profile", p.profile)
+	}
+	if p.region != "" {
+		args = append(args, "--region", p.region)
+	}
+
+	cmd := exec.CommandContext(ctx, "aws", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", "", fmt.Errorf("aws ecs describe-services failed: %w (stderr: %q)", err, stderr.String())
+	}
+
+	var serviceOutput struct {
+		Services []struct {
+			TaskDefinition string `json:"taskDefinition"`
+		} `json:"services"`
+	}
+
+	if err := json.Unmarshal(stdout.Bytes(), &serviceOutput); err != nil {
+		return "", "", fmt.Errorf("failed to parse describe-services JSON: %w", err)
+	}
+
+	if len(serviceOutput.Services) == 0 {
+		return "", "", fmt.Errorf("no ECS service details found for %q", service)
+	}
+
+	taskDefARN := serviceOutput.Services[0].TaskDefinition
+	if taskDefARN == "" {
+		return "", "", fmt.Errorf("ECS service %q has no active task definition", service)
+	}
+
+	// 2. Describe task definition to parse log configuration options
+	argsDef := []string{"ecs", "describe-task-definition", "--task-definition", taskDefARN, "--output", "json"}
+	if p.profile != "" {
+		argsDef = append(argsDef, "--profile", p.profile)
+	}
+	if p.region != "" {
+		argsDef = append(argsDef, "--region", p.region)
+	}
+
+	cmdDef := exec.CommandContext(ctx, "aws", argsDef...)
+	var stdoutDef, stderrDef bytes.Buffer
+	cmdDef.Stdout = &stdoutDef
+	cmdDef.Stderr = &stderrDef
+
+	if err := cmdDef.Run(); err != nil {
+		return "", "", fmt.Errorf("aws ecs describe-task-definition failed: %w (stderr: %q)", err, stderrDef.String())
+	}
+
+	var taskDefOutput struct {
+		TaskDefinition struct {
+			ContainerDefinitions []struct {
+				Name             string `json:"name"`
+				LogConfiguration struct {
+					LogDriver string            `json:"logDriver"`
+					Options   map[string]string `json:"options"`
+				} `json:"logConfiguration"`
+			} `json:"containerDefinitions"`
+		} `json:"taskDefinition"`
+	}
+
+	if err := json.Unmarshal(stdoutDef.Bytes(), &taskDefOutput); err != nil {
+		return "", "", fmt.Errorf("failed to parse describe-task-definition JSON: %w", err)
+	}
+
+	containerDefinitions := taskDefOutput.TaskDefinition.ContainerDefinitions
+	if len(containerDefinitions) == 0 {
+		return "", "", fmt.Errorf("task definition %q contains no containers", taskDefARN)
+	}
+
+	// Look for the first container utilizing the awslogs driver
+	var selectedLogGroup string
+	var selectedPrefix string
+
+	for _, container := range containerDefinitions {
+		if container.LogConfiguration.LogDriver == "awslogs" && container.LogConfiguration.Options != nil {
+			selectedLogGroup = container.LogConfiguration.Options["awslogs-group"]
+			selectedPrefix = container.LogConfiguration.Options["awslogs-stream-prefix"]
+			break
+		}
+	}
+
+	if selectedLogGroup == "" {
+		return "", "", fmt.Errorf("no container utilizing the 'awslogs' driver was found in task definition %q", taskDefARN)
+	}
+
+	return selectedLogGroup, selectedPrefix, nil
 }

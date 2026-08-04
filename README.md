@@ -120,3 +120,31 @@ To manage configuration or caching for other workspaces without switching to the
 ```bash
 cx ecs --cache true --ws staging
 ```
+
+### Tail ECS CloudWatch Logs
+To tail the CloudWatch logs of a service in real-time, run:
+```bash
+cx ecs logs [service]
+# Or using aliases:
+cx ecs cloudwatch [service]
+cx ecs cw [service]
+```
+If the service name is omitted, you will be prompted with the cluster and service selection TUI picker.
+
+#### Log Group Resolution Caching
+The first time you select a service, `cx` queries AWS to fetch its active task definition and extract its Log Group and Log Stream prefix. This resolved configuration is cached in `~/.config/cx/ecs_cache.json`. Subsequent logs runs will load the log group from the cache instantly (under 200ms) without making slow AWS API calls.
+
+*To force discovery again (e.g. if the task definition log group changed), run with the refresh flag:*
+```bash
+cx ecs logs [service] -r
+```
+
+#### Custom History & Filtering
+*   **Show recent history (default 10m)**:
+    ```bash
+    cx ecs logs my-service --since 30m
+    ```
+*   **Filter/Search logs for a pattern**:
+    ```bash
+    cx ecs logs my-service --filter "ERROR"
+    ```

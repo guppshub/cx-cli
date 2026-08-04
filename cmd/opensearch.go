@@ -22,70 +22,71 @@ import (
 )
 
 var (
-	rdsPortFlag       int
-	rdsForegroundFlag bool
-	rdsServerModeFlag bool
-	rdsRefreshFlag    bool
+	osPortFlag       int
+	osForegroundFlag bool
+	osServerModeFlag bool
+	osRefreshFlag    bool
 )
 
-// rdsCmd represents the rds command
-var rdsCmd = &cobra.Command{
-	Use:   "rds [database]",
-	Short: "Establish a secure tunnel to an RDS database resource",
-	Long:  `Establish a secure SSH tunnel to an Amazon RDS database resource configured in your active workspace through a Bastion host.`,
-	Args:  cobra.MaximumNArgs(1),
+// opensearchCmd represents the opensearch command
+var opensearchCmd = &cobra.Command{
+	Use:     "opensearch [domain]",
+	Aliases: []string{"os"},
+	Short:   "Establish a secure tunnel to an OpenSearch domain resource",
+	Long:    `Establish a secure SSH tunnel to an Amazon OpenSearch domain resource configured in your active workspace through a Bastion host.`,
+	Args:    cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
 		// 1. Initialize AWS provider and verify credentials
-		awsProvider, ws, err := initAWSProvider(ctx, rdsServerModeFlag)
+		awsProvider, ws, err := initAWSProvider(ctx, osServerModeFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
-		var dbResource *resource.DatabaseResource
+		var osResource *resource.OpenSearchResource
 
 		if len(args) > 0 {
-			// Resolve specified database
-			dbName := args[0]
-			dbResource, err = resource.ResolveRDS(ws, dbName)
+			// Resolve specified domain
+			osName := args[0]
+			osResource, err = resource.ResolveOpenSearch(ws, osName)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		} else {
-			// List and select database resource interactively
-			rdsList, err := resource.FetchRDS(ws)
+			// List and select OpenSearch resource interactively
+			osList, err := resource.FetchOpenSearch(ws)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 
-			if len(rdsList) == 0 {
-				fmt.Println("No RDS database resources configured in the active workspace.")
+			if len(osList) == 0 {
+				fmt.Println("No OpenSearch resources configured in the active workspace.")
 				os.Exit(0)
 			}
 
-			if len(rdsList) == 1 {
-				dbResource = &rdsList[0]
-				fmt.Printf("Using RDS database resource: %s\n", dbResource.Name)
+			if len(osList) == 1 {
+				osResource = &osList[0]
+				fmt.Printf("Using OpenSearch resource: %s\n", osResource.Name)
 			} else {
 				var rows []picker.Row
-				for _, r := range rdsList {
+				for _, o := range osList {
 					rows = append(rows, picker.Row{
-						ID: r.Name,
+						ID: o.Name,
 						Fields: []string{
-							r.Name,
-							r.Engine,
-							r.Endpoint,
-							fmt.Sprint(r.Port),
+							o.Name,
+							o.Endpoint,
+							fmt.Sprint(o.Port),
+							fmt.Sprint(o.LocalPort),
 						},
 					})
 				}
-				headers := []string{"RDS Name", "Engine", "Endpoint", "Port"}
-				selectedID, err := picker.SingleSelect("Select RDS Database", headers, rows)
+				headers := []string{"OpenSearch Name", "Endpoint", "Port", "Local Port"}
+				selectedID, err := picker.SingleSelect("Select OpenSearch Domain", headers, rows)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					os.Exit(1)
@@ -96,17 +97,17 @@ var rdsCmd = &cobra.Command{
 				}
 
 				// Find the selected resource
-				for _, r := range rdsList {
-					if r.Name == selectedID {
-						dbResource = &r
+				for _, o := range osList {
+					if o.Name == selectedID {
+						osResource = &o
 						break
 					}
 				}
 			}
 		}
 
-		if dbResource == nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to resolve RDS database resource\n")
+		if osResource == nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to resolve OpenSearch resource\n")
 			os.Exit(1)
 		}
 
@@ -120,14 +121,14 @@ var rdsCmd = &cobra.Command{
 		var tokenExpiration string
 
 		// Handle MFA and STS temporary credentials if enabled
-		if dbResource.MFA {
+		if osResource.MFA {
 			cacheKey := fmt.Sprintf("%s/%s", wsName, awsProvider.Profile())
 			stsProfileName := awsProvider.Profile() + "-sts"
 			if awsProvider.Profile() == "" {
 				stsProfileName = "default-sts"
 			}
 
-			if rdsServerModeFlag {
+			if osServerModeFlag {
 				// Server mode: read from cache directly, no prompts
 				stsCache, err := awsprovider.LoadSTSCache()
 				if err == nil && stsCache != nil {
@@ -148,7 +149,7 @@ var rdsCmd = &cobra.Command{
 
 				creds, ok := stsCache.Credentials[cacheKey]
 
-				if ok && !rdsRefreshFlag && time.Now().Add(5*time.Minute).Before(creds.Expiration) {
+				if ok && !osRefreshFlag && time.Now().Add(5*time.Minute).Before(creds.Expiration) {
 					// Use valid cached credentials
 					_ = os.Setenv("AWS_ACCESS_KEY_ID", creds.AccessKeyID)
 					_ = os.Setenv("AWS_SECRET_ACCESS_KEY", creds.SecretAccessKey)
@@ -162,7 +163,7 @@ var rdsCmd = &cobra.Command{
 					awsProvider.SetProfile(stsProfileName)
 				} else {
 					// Need to authenticate
-					mfaSerial := dbResource.MFASerial
+					mfaSerial := osResource.MFASerial
 					if mfaSerial == "" {
 						fmt.Println("Auto-discovering AWS MFA device ARN...")
 						serial, err := awsProvider.ListMFADevices(ctx)
@@ -182,7 +183,7 @@ var rdsCmd = &cobra.Command{
 					mfaCode = strings.TrimSpace(mfaCode)
 
 					fmt.Println("Exchanging code for temporary AWS STS credentials...")
-					stsCreds, err := awsProvider.GetSessionToken(ctx, mfaSerial, mfaCode, dbResource.MFADuration)
+					stsCreds, err := awsProvider.GetSessionToken(ctx, mfaSerial, mfaCode, osResource.MFADuration)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "Error: failed to get session token: %v\n", err)
 						os.Exit(1)
@@ -226,12 +227,12 @@ var rdsCmd = &cobra.Command{
 		connMgr := connection.NewManager(stateStore)
 
 		// Check if active connection already exists
-		if !rdsServerModeFlag {
-			conn, err := connMgr.GetActiveConnection(wsName, dbResource.Name)
+		if !osServerModeFlag {
+			conn, err := connMgr.GetActiveConnection(wsName, osResource.Name)
 			if err == nil && conn != nil {
 				// If the connection is not in a healthy or recovering state, we clean it up and restart
 				if conn.State == string(connection.StateStopped) || conn.State == string(connection.StateFailed) {
-					fmt.Printf("Existing tunnel for %q is in %s state. Cleaning up and restarting...\n", dbResource.Name, conn.State)
+					fmt.Printf("Existing tunnel for %q is in %s state. Cleaning up and restarting...\n", osResource.Name, conn.State)
 					connection.TerminateProcessGroup(conn.Pid, 1000*time.Millisecond)
 					_ = connMgr.DeregisterState(conn.ConnectionID)
 				} else {
@@ -239,86 +240,82 @@ var rdsCmd = &cobra.Command{
 					if stateStr == "" {
 						stateStr = "Healthy"
 					}
-					fmt.Printf("Tunnel to RDS database %q is already running in background (PID: %d, State: %s).\n", conn.Name, conn.Pid, stateStr)
-					fmt.Printf("RDS database %q is listening on local port %d.\n", conn.Name, conn.LocalPort)
+					fmt.Printf("Tunnel to OpenSearch %q is already running in background (PID: %d, State: %s).\n", conn.Name, conn.Pid, stateStr)
+					fmt.Printf("OpenSearch %q is listening on local port %d.\n", conn.Name, conn.LocalPort)
 					return
 				}
 			}
 		}
 
 		// Local port mapping
-		localPort := rdsPortFlag
-		if localPort <= 0 {
-			localPort = dbResource.LocalPort
-		}
-		// Final fallback port
-		if localPort <= 0 {
-			localPort = 5432
+		localPort := osResource.LocalPort
+		if osPortFlag > 0 {
+			localPort = osPortFlag
 		}
 
 		target := &tunnel.Target{
-			BastionInstanceID:  dbResource.BastionInstanceID,
-			RemoteHost:         dbResource.Endpoint,
-			RemotePort:         dbResource.Port,
+			BastionInstanceID:  osResource.BastionInstanceID,
+			RemoteHost:         osResource.Endpoint,
+			RemotePort:         osResource.Port,
 			PreferredLocalPort: localPort,
 		}
 
 		// 3. Handshake connectivity check (only in foreground/parent mode!)
-		if !rdsServerModeFlag {
+		if !osServerModeFlag {
 			// Verify bastion and SSM connectivity with a quick handshake
 			fmt.Printf("Verifying connection to bastion %s...\n", target.BastionInstanceID)
-			if err := connMgr.PreflightHandshake(ctx, awsProvider, target, dbResource.Engine); err != nil {
+			if err := connMgr.PreflightHandshake(ctx, awsProvider, target, "opensearch"); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 			fmt.Println("Connection handshake successful.")
 
-			if !rdsForegroundFlag {
+			if !osForegroundFlag {
 				// Launch detached background daemon
-				logDir := filepath.Join(filepath.Dir(sPath), "logs")
-				if err := os.MkdirAll(logDir, 0755); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: failed to create log directory: %v\n", err)
-					os.Exit(1)
-				}
-
-				daemon, err := connection.SpawnDaemon(os.Args[0], "rds", dbResource.Name, localPort, logDir)
+				binPath, err := os.Executable()
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error spawning background daemon: %v\n", err)
+					fmt.Fprintf(os.Stderr, "Error: failed to resolve binary path: %v\n", err)
 					os.Exit(1)
 				}
 
-				fmt.Printf("Starting background tunnel daemon for RDS database %s (port %d)...\n", dbResource.Name, localPort)
+				logDir := filepath.Join(filepath.Dir(sPath), "logs")
+				_ = os.MkdirAll(logDir, 0755)
+
+				fmt.Println("Launching background OpenSearch tunnel daemon...")
+				daemon, err := connection.SpawnDaemon(binPath, "opensearch", osResource.Name, localPort, logDir)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+
+				// Wait up to 5 seconds to verify that the daemon registers itself successfully in state.json
 				finalLocalPort, err := daemon.VerifyRegistration(stateStore, 5*time.Second)
 				if err != nil {
-					fmt.Fprintln(os.Stderr, "Error: background daemon failed to initialize. Check logs:")
-					logData, _ := os.ReadFile(daemon.LogPath())
-					fmt.Fprintf(os.Stderr, "%s\n", string(logData))
-					if daemon.ErrorLogPath() != daemon.LogPath() {
-						errData, _ := os.ReadFile(daemon.ErrorLogPath())
-						if len(errData) > 0 {
-							fmt.Fprintf(os.Stderr, "Errors:\n%s\n", string(errData))
-						}
-					}
+					// Read stderr log output to display to the user
+					logContent, _ := os.ReadFile(daemon.ErrorLogPath())
+					fmt.Fprintf(os.Stderr, "Error: background daemon failed to start. Logs:\n%s\n", string(logContent))
 					os.Exit(1)
 				}
 
-				fmt.Printf("Success! Tunnel established in background.\n")
-				fmt.Printf("RDS database %q is listening on local port %d.\n", dbResource.Name, finalLocalPort)
-				fmt.Printf("Log file: %s\n", daemon.LogPath())
+				fmt.Printf("✔ OpenSearch tunnel successfully started in background!\n")
+				fmt.Printf("Local Bind: localhost:%d\n", finalLocalPort)
+				fmt.Printf("View logs at: tail -f %s\n", daemon.LogPath())
 				return
 			}
 		}
 
+		// 3. Set up the dialer
+		dialer := awsprovider.NewTunnelDialer(awsProvider, target)
+
 		// 4. Server mode: use supervisor with auto-reconnection
-		if rdsServerModeFlag {
+		if osServerModeFlag {
 			connection.IgnoreUserSignals()
-			connID := fmt.Sprintf("cx-conn-%s-%d", dbResource.Name, target.PreferredLocalPort)
+			connID := fmt.Sprintf("cx-conn-%s-%d", osResource.Name, target.PreferredLocalPort)
 			logger := log.New(os.Stderr, "", log.LstdFlags)
-			dialer := awsprovider.NewTunnelDialer(awsProvider, target)
 
 			sv := connection.NewSupervisor(connection.SupervisorConfig{
-				Name:   dbResource.Name,
-				Type:   "rds",
+				Name:   osResource.Name,
+				Type:   "opensearch",
 				Dialer: dialer,
 				Policy: connection.NewFixedBackoff(5*time.Second, 50),
 				Logger: logger,
@@ -368,7 +365,7 @@ var rdsCmd = &cobra.Command{
 		}
 		defer func() { _ = tunnelConn.Close() }()
 
-		fmt.Printf("Tunneling RDS database %s (%s) through local port %d...\n", dbResource.Name, dbResource.Engine, target.PreferredLocalPort)
+		fmt.Printf("Tunneling OpenSearch %s through local port %d...\n", osResource.Name, target.PreferredLocalPort)
 		fmt.Println("Press Ctrl+C to terminate connection.")
 
 		<-ctx.Done()
@@ -377,10 +374,10 @@ var rdsCmd = &cobra.Command{
 }
 
 func init() {
-	rdsCmd.Flags().IntVarP(&rdsPortFlag, "port", "p", 0, "Local port override")
-	rdsCmd.Flags().BoolVarP(&rdsForegroundFlag, "foreground", "f", false, "Run tunnel in the foreground")
-	rdsCmd.Flags().BoolVar(&rdsServerModeFlag, "server", false, "Internal use only: start background tunnel server")
-	rdsCmd.Flags().BoolVarP(&rdsRefreshFlag, "refresh", "r", false, "Force MFA token code prompt and refresh session token cache")
-	_ = rdsCmd.Flags().MarkHidden("server")
-	rootCmd.AddCommand(rdsCmd)
+	opensearchCmd.Flags().IntVarP(&osPortFlag, "port", "p", 0, "Local port override")
+	opensearchCmd.Flags().BoolVarP(&osForegroundFlag, "foreground", "f", false, "Run tunnel in the foreground")
+	opensearchCmd.Flags().BoolVar(&osServerModeFlag, "server", false, "Internal use only: start background tunnel server")
+	opensearchCmd.Flags().BoolVarP(&osRefreshFlag, "refresh", "r", false, "Force MFA token code prompt and refresh session token cache")
+	_ = opensearchCmd.Flags().MarkHidden("server")
+	rootCmd.AddCommand(opensearchCmd)
 }

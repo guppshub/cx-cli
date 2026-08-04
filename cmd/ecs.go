@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -86,158 +88,14 @@ var ecsCmd = &cobra.Command{
 		}
 
 		// 5. Query execution using cache or live AWS
-		var clusterName string
-		var serviceName string
 		var tasks []aws.ECSTask
-
-		useCache := ecsCfg.Cache && !ecsRefreshFlag
-
-		if useCache && ecsCfg.DefaultCluster != "" {
-			clusterName = ecsCfg.DefaultCluster
-			// Try to load services from ecs_cache.json
-			cache, err := aws.LoadCache()
-			var cachedServices []aws.ECSService
-			if err == nil && cache != nil {
-				if wsCache, ok := cache.Workspaces[wsName]; ok {
-					if services, ok := wsCache.Services[clusterName]; ok {
-						cachedServices = services
-					}
-				}
-			}
-
-			if len(cachedServices) > 0 {
-				// 1-step selection: display cached service list directly
-				fmt.Printf("Using cached cluster %q for workspace %q.\n", clusterName, wsName)
-				var rows []picker.Row
-				for _, s := range cachedServices {
-					rows = append(rows, picker.Row{
-						ID:     s.Name,
-						Fields: []string{s.Name, s.ARN},
-					})
-				}
-				headers := []string{"Service Name", "ARN"}
-				selectedID, err := picker.SingleSelect("Select ECS Service", headers, rows)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-				if selectedID == "" {
-					fmt.Println("Selection cancelled")
-					os.Exit(0)
-				}
-				serviceName = selectedID
-			} else {
-				// Cache is active but empty; fetch services from AWS, cache them, and proceed
-				fmt.Printf("Cache empty. Fetching services for default cluster %q from AWS...\n", clusterName)
-				services, err := awsProvider.FetchECSServices(ctx, clusterName)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-				if len(services) == 0 {
-					fmt.Printf("No ECS services found in cluster %q.\n", clusterName)
-					os.Exit(0)
-				}
-
-				// Update cache file with fetched services
-				updateCacheData(wsName, clusterName, nil, services)
-
-				var rows []picker.Row
-				for _, s := range services {
-					rows = append(rows, picker.Row{
-						ID:     s.Name,
-						Fields: []string{s.Name, s.ARN},
-					})
-				}
-				headers := []string{"Service Name", "ARN"}
-				selectedID, err := picker.SingleSelect("Select ECS Service", headers, rows)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-				if selectedID == "" {
-					fmt.Println("Selection cancelled")
-					os.Exit(0)
-				}
-				serviceName = selectedID
-			}
-		} else {
-			// standard query flow (no cache or explicit refresh)
-			fmt.Println("Fetching ECS clusters from AWS...")
-			clusters, err := awsProvider.FetchECSClusters(ctx)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			if len(clusters) == 0 {
-				fmt.Println("No ECS clusters found in workspace.")
+		clusterName, serviceName, err := resolveClusterAndService(ctx, awsProvider, wsName, ws, ecsCfg, ecsRefreshFlag)
+		if err != nil {
+			if err.Error() == "selection cancelled" {
 				os.Exit(0)
 			}
-
-			if len(clusters) == 1 {
-				clusterName = clusters[0].Name
-				fmt.Printf("Using ECS Cluster: %s\n", clusterName)
-			} else {
-				var rows []picker.Row
-				for _, c := range clusters {
-					rows = append(rows, picker.Row{
-						ID:     c.Name,
-						Fields: []string{c.Name, c.ARN},
-					})
-				}
-				headers := []string{"Cluster Name", "ARN"}
-				selectedID, err := picker.SingleSelect("Select ECS Cluster", headers, rows)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-				if selectedID == "" {
-					fmt.Println("Selection cancelled")
-					os.Exit(0)
-				}
-				clusterName = selectedID
-			}
-
-			fmt.Println("Fetching ECS services from AWS...")
-			services, err := awsProvider.FetchECSServices(ctx, clusterName)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			if len(services) == 0 {
-				fmt.Printf("No ECS services found in cluster %q.\n", clusterName)
-				os.Exit(0)
-			}
-
-			// If cache is enabled (but we bypassed it due to --refresh), update the cache file
-			if ecsCfg.Cache {
-				updateCacheData(wsName, clusterName, clusters, services)
-				fmt.Println("✔ ECS cache updated successfully.")
-			}
-
-			if len(services) == 1 {
-				serviceName = services[0].Name
-				fmt.Printf("Using ECS Service: %s\n", serviceName)
-			} else {
-				var rows []picker.Row
-				for _, s := range services {
-					rows = append(rows, picker.Row{
-						ID:     s.Name,
-						Fields: []string{s.Name, s.ARN},
-					})
-				}
-				headers := []string{"Service Name", "ARN"}
-				selectedID, err := picker.SingleSelect("Select ECS Service", headers, rows)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-				if selectedID == "" {
-					fmt.Println("Selection cancelled")
-					os.Exit(0)
-				}
-				serviceName = selectedID
-			}
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
 
 		// 6. Monitor tasks
@@ -406,15 +264,15 @@ func updateCacheData(wsName, clusterName string, clusters []aws.ECSCluster, serv
 }
 
 func runWatchMode(ctx context.Context, p *aws.Provider, cluster, service string) {
-	// Hide cursor and clear screen once initially
-	fmt.Print("\033[?25l\033[H\033[2J")
-	defer fmt.Print("\033[?25h") // Ensure cursor is restored on exit
+	// Use alternate screen buffer, hide cursor, and clear screen
+	fmt.Print("\033[?1049h\033[?25l\033[H\033[2J")
+	defer fmt.Print("\033[?1049l\033[?25h") // Restore screen and cursor on exit
 
 	for {
 		tasks, err := p.FetchECSTasks(ctx, cluster, service)
 
-		// Reposition cursor to the top-left corner immediately before rendering
-		fmt.Print("\033[H")
+		// Reposition cursor to top-left and clear the screen before rendering
+		fmt.Print("\033[H\033[J")
 
 		if err != nil {
 			if ctx.Err() != nil {
@@ -546,10 +404,369 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dm", m)
 }
 
+func resolveClusterAndService(ctx context.Context, awsProvider *aws.Provider, wsName string, ws *config.Workspace, ecsCfg *config.ECSConfig, forceRefresh bool) (string, string, error) {
+	var clusterName string
+	var serviceName string
+
+	useCache := ecsCfg.Cache && !forceRefresh
+
+	if useCache && ecsCfg.DefaultCluster != "" {
+		clusterName = ecsCfg.DefaultCluster
+		// Try to load services from ecs_cache.json
+		cache, err := aws.LoadCache()
+		var cachedServices []aws.ECSService
+		if err == nil && cache != nil {
+			if wsCache, ok := cache.Workspaces[wsName]; ok {
+				if services, ok := wsCache.Services[clusterName]; ok {
+					cachedServices = services
+				}
+			}
+		}
+
+		if len(cachedServices) > 0 {
+			// 1-step selection: display cached service list directly
+			fmt.Printf("Using cached cluster %q for workspace %q.\n", clusterName, wsName)
+			var rows []picker.Row
+			for _, s := range cachedServices {
+				rows = append(rows, picker.Row{
+					ID:     s.Name,
+					Fields: []string{s.Name, s.ARN},
+				})
+			}
+			headers := []string{"Service Name", "ARN"}
+			selectedID, err := picker.SingleSelect("Select ECS Service", headers, rows)
+			if err != nil {
+				return "", "", err
+			}
+			if selectedID == "" {
+				return "", "", fmt.Errorf("selection cancelled")
+			}
+			serviceName = selectedID
+		} else {
+			// Cache is active but empty; fetch services from AWS, cache them, and proceed
+			fmt.Printf("Cache empty. Fetching services for default cluster %q from AWS...\n", clusterName)
+			services, err := awsProvider.FetchECSServices(ctx, clusterName)
+			if err != nil {
+				return "", "", err
+			}
+			if len(services) == 0 {
+				return "", "", fmt.Errorf("no ECS services found in cluster %q", clusterName)
+			}
+
+			// Update cache file with fetched services
+			updateCacheData(wsName, clusterName, nil, services)
+
+			var rows []picker.Row
+			for _, s := range services {
+				rows = append(rows, picker.Row{
+					ID:     s.Name,
+					Fields: []string{s.Name, s.ARN},
+				})
+			}
+			headers := []string{"Service Name", "ARN"}
+			selectedID, err := picker.SingleSelect("Select ECS Service", headers, rows)
+			if err != nil {
+				return "", "", err
+			}
+			if selectedID == "" {
+				return "", "", fmt.Errorf("selection cancelled")
+			}
+			serviceName = selectedID
+		}
+	} else {
+		// standard query flow (no cache or explicit refresh)
+		fmt.Println("Fetching ECS clusters from AWS...")
+		clusters, err := awsProvider.FetchECSClusters(ctx)
+		if err != nil {
+			return "", "", err
+		}
+		if len(clusters) == 0 {
+			return "", "", fmt.Errorf("no ECS clusters found in workspace")
+		}
+
+		if len(clusters) == 1 {
+			clusterName = clusters[0].Name
+			fmt.Printf("Using ECS Cluster: %s\n", clusterName)
+		} else {
+			var rows []picker.Row
+			for _, c := range clusters {
+				rows = append(rows, picker.Row{
+					ID:     c.Name,
+					Fields: []string{c.Name, c.ARN},
+				})
+			}
+			headers := []string{"Cluster Name", "ARN"}
+			selectedID, err := picker.SingleSelect("Select ECS Cluster", headers, rows)
+			if err != nil {
+				return "", "", err
+			}
+			if selectedID == "" {
+				return "", "", fmt.Errorf("selection cancelled")
+			}
+			clusterName = selectedID
+		}
+
+		fmt.Println("Fetching ECS services from AWS...")
+		services, err := awsProvider.FetchECSServices(ctx, clusterName)
+		if err != nil {
+			return "", "", err
+		}
+		if len(services) == 0 {
+			return "", "", fmt.Errorf("no ECS services found in cluster %q", clusterName)
+		}
+
+		// If cache is enabled (but we bypassed it due to --refresh), update the cache file
+		if ecsCfg.Cache {
+			updateCacheData(wsName, clusterName, clusters, services)
+			fmt.Println("✔ ECS cache updated successfully.")
+		}
+
+		if len(services) == 1 {
+			serviceName = services[0].Name
+			fmt.Printf("Using ECS Service: %s\n", serviceName)
+		} else {
+			var rows []picker.Row
+			for _, s := range services {
+				rows = append(rows, picker.Row{
+					ID:     s.Name,
+					Fields: []string{s.Name, s.ARN},
+				})
+			}
+			headers := []string{"Service Name", "ARN"}
+			selectedID, err := picker.SingleSelect("Select ECS Service", headers, rows)
+			if err != nil {
+				return "", "", err
+			}
+			if selectedID == "" {
+				return "", "", fmt.Errorf("selection cancelled")
+			}
+			serviceName = selectedID
+		}
+	}
+
+	return clusterName, serviceName, nil
+}
+
+var (
+	ecsLogsSinceFlag  string
+	ecsLogsFilterFlag string
+)
+
+var ecsLogsCmd = &cobra.Command{
+	Use:     "logs [service]",
+	Aliases: []string{"cloudwatch", "cw"},
+	Short:   "Tail CloudWatch logs for an ECS service container in real-time",
+	Args:    cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+
+		wsName := ecsWorkspaceFlag
+		if wsName == "" {
+			cfg, err := config.Load()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to load config: %v\n", err)
+				os.Exit(1)
+			}
+			wsName = cfg.Current
+		}
+
+		if wsName == "" {
+			fmt.Fprintf(os.Stderr, "Error: no active workspace selected. Use \"cx use <workspace>\" first\n")
+			os.Exit(1)
+		}
+
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if _, exists := cfg.Workspaces[wsName]; !exists {
+			fmt.Fprintf(os.Stderr, "Error: workspace %q not found in workspaces\n", wsName)
+			os.Exit(1)
+		}
+
+		awsProvider, ws, err := initAWSProviderForWorkspace(ctx, wsName, false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		ecsCfg, err := config.GetECSConfig(ws)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		var clusterName string
+		var serviceName string
+
+		// If service is specified as argument, we still need to know its cluster.
+		// If ecsCfg.DefaultCluster is defined, we use it. Otherwise, we must list/prompt or search.
+		if len(args) > 0 {
+			serviceName = args[0]
+			if ecsCfg.DefaultCluster != "" {
+				clusterName = ecsCfg.DefaultCluster
+			} else {
+				// Search for which cluster contains this service, or prompt
+				clusters, err := awsProvider.FetchECSClusters(ctx)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+				if len(clusters) == 0 {
+					fmt.Println("No ECS clusters found.")
+					os.Exit(1)
+				}
+				if len(clusters) == 1 {
+					clusterName = clusters[0].Name
+				} else {
+					var rows []picker.Row
+					for _, c := range clusters {
+						rows = append(rows, picker.Row{
+							ID:     c.Name,
+							Fields: []string{c.Name, c.ARN},
+						})
+					}
+					headers := []string{"Cluster Name", "ARN"}
+					selectedID, err := picker.SingleSelect("Select ECS Cluster containing service", headers, rows)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+						os.Exit(1)
+					}
+					if selectedID == "" {
+						fmt.Println("Selection cancelled")
+						os.Exit(0)
+					}
+					clusterName = selectedID
+				}
+			}
+		} else {
+			// Resolve cluster and service interactively
+			clusterName, serviceName, err = resolveClusterAndService(ctx, awsProvider, wsName, ws, ecsCfg, ecsRefreshFlag)
+			if err != nil {
+				if err.Error() == "selection cancelled" {
+					os.Exit(0)
+				}
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		// Find log group and stream prefix using cache or fetching live
+		var logGroup string
+		var streamPrefix string
+
+		cache, err := aws.LoadCache()
+		var wsCache *aws.WorkspaceCache
+		var serviceIndex = -1
+
+		if err == nil && cache != nil && !ecsRefreshFlag {
+			if wc, ok := cache.Workspaces[wsName]; ok {
+				wsCache = wc
+				if services, ok := wc.Services[clusterName]; ok {
+					for i, s := range services {
+						if s.Name == serviceName {
+							logGroup = s.LogGroup
+							streamPrefix = s.LogStreamPrefix
+							serviceIndex = i
+							break
+						}
+					}
+				}
+			}
+		}
+
+		if logGroup == "" {
+			fmt.Printf("Discovering CloudWatch log configuration for service %q...\n", serviceName)
+			lg, prefix, err := awsProvider.FetchECSLogConfig(ctx, clusterName, serviceName)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			logGroup = lg
+			streamPrefix = prefix
+			fmt.Printf("✔ Discovered Log Group: %s\n", logGroup)
+
+			// Update cache entry
+			if cache != nil {
+				if wsCache == nil {
+					wsCache = &aws.WorkspaceCache{
+						Services: make(map[string][]aws.ECSService),
+					}
+					cache.Workspaces[wsName] = wsCache
+				}
+				services := wsCache.Services[clusterName]
+				if serviceIndex >= 0 && serviceIndex < len(services) {
+					services[serviceIndex].LogGroup = logGroup
+					services[serviceIndex].LogStreamPrefix = streamPrefix
+				} else {
+					// Service not in cache yet (uncommon if we loaded via picker), add it
+					services = append(services, aws.ECSService{
+						Name:            serviceName,
+						ARN:             "", // optional / unknown here
+						LogGroup:        logGroup,
+						LogStreamPrefix: streamPrefix,
+					})
+				}
+				wsCache.Services[clusterName] = services
+				wsCache.LastUpdated = time.Now()
+				if err := aws.SaveCache(cache); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to save log config to cache: %v\n", err)
+				} else {
+					fmt.Println("✔ Saved log config to ecs_cache.json")
+				}
+			}
+		} else {
+			if streamPrefix != "" {
+				fmt.Printf("Using cached Log Group: %s (stream prefix: %s)\n", logGroup, streamPrefix)
+			} else {
+				fmt.Printf("Using cached Log Group: %s\n", logGroup)
+			}
+		}
+
+		// Execute tail command: aws logs tail <logGroup> --follow --since <since>
+		argsLogs := []string{"logs", "tail", logGroup, "--follow"}
+		if ecsLogsSinceFlag != "" {
+			argsLogs = append(argsLogs, "--since", ecsLogsSinceFlag)
+		}
+		if ecsLogsFilterFlag != "" {
+			argsLogs = append(argsLogs, "--filter-pattern", ecsLogsFilterFlag)
+		}
+
+		profileName := awsProvider.Profile()
+		if profileName != "" {
+			argsLogs = append(argsLogs, "--profile", profileName)
+		}
+		if region := awsProvider.Region(); region != "" {
+			argsLogs = append(argsLogs, "--region", region)
+		}
+
+		fmt.Printf("Tailing logs for %s (Press Ctrl+C to stop)...\n\n", serviceName)
+		runCmd := exec.CommandContext(ctx, "aws", argsLogs...)
+		runCmd.Stdin = os.Stdin
+		runCmd.Stdout = os.Stdout
+		runCmd.Stderr = os.Stderr
+
+		if err := runCmd.Run(); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "\nError: tail command exited: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 func init() {
 	ecsCmd.Flags().BoolVarP(&ecsWatchFlag, "watch", "w", false, "Enable continuous real-time task status updates")
 	ecsCmd.Flags().StringVar(&ecsCacheFlag, "cache", "", "Configure ECS caching for the workspace ('true' or 'false')")
 	ecsCmd.Flags().StringVar(&ecsWorkspaceFlag, "ws", "", "AWS workspace override")
 	ecsCmd.Flags().BoolVarP(&ecsRefreshFlag, "refresh", "r", false, "Force a refresh of cached ECS clusters and services")
+	
+	ecsLogsCmd.Flags().StringVarP(&ecsLogsSinceFlag, "since", "s", "10m", "Tailing history window (e.g. 10m, 1h, 1d)")
+	ecsLogsCmd.Flags().StringVarP(&ecsLogsFilterFlag, "filter", "f", "", "Filter pattern string to search/match")
+	ecsCmd.AddCommand(ecsLogsCmd)
+
 	rootCmd.AddCommand(ecsCmd)
 }

@@ -39,13 +39,32 @@ func initAWSProvider(ctx context.Context, skipEnsure bool) (*aws.Provider, *conf
 		// Ensure credentials are authenticated (with MFA prompt support)
 		if err := awsProvider.EnsureCredentials(ctx, func(prompt string, secret bool) (string, error) {
 			fmt.Print(prompt)
-			var input string
-			_, err := fmt.Scanln(&input)
-			return input, err
+			return readLineWithContext(ctx)
 		}); err != nil {
 			return nil, nil, fmt.Errorf("credentials negotiation failed: %w", err)
 		}
 	}
 
 	return awsProvider, ws, nil
+}
+
+// readLineWithContext reads from stdin inside a goroutine, returning early if the context is cancelled.
+func readLineWithContext(ctx context.Context) (string, error) {
+	type result struct {
+		text string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		var input string
+		_, err := fmt.Scanln(&input)
+		ch <- result{text: input, err: err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case res := <-ch:
+		return res.text, res.err
+	}
 }

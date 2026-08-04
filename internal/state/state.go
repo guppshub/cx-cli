@@ -18,6 +18,7 @@ type State struct {
 type ConnectionMetadata struct {
 	Type         string `json:"type"`
 	Name         string `json:"name"`
+	Workspace    string `json:"workspace,omitempty"`
 	LocalPort    int    `json:"local_port"`
 	ConnectionID string `json:"connection_id"`
 	ConnectedAt  string `json:"connected_at"`
