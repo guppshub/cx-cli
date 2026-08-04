@@ -406,11 +406,16 @@ func updateCacheData(wsName, clusterName string, clusters []aws.ECSCluster, serv
 }
 
 func runWatchMode(ctx context.Context, p *aws.Provider, cluster, service string) {
+	// Clear screen once initially
+	fmt.Print("\033[H\033[2J")
+
 	for {
-		fmt.Print("\033[H\033[2J") // Clear screen
+		// Reposition cursor to the top-left corner (flicker-free update)
+		fmt.Print("\033[H")
 
 		tasks, err := p.FetchECSTasks(ctx, cluster, service)
 		if err != nil {
+			fmt.Print("\033[J") // Clear screen below cursor
 			fmt.Fprintf(os.Stderr, "Error: failed to fetch tasks: %v\n", err)
 			time.Sleep(5 * time.Second)
 			continue
@@ -423,6 +428,9 @@ func runWatchMode(ctx context.Context, p *aws.Provider, cluster, service string)
 		}
 
 		fmt.Println("\nPress Ctrl+C to exit watch mode.")
+
+		// Clear any remaining old characters/lines below the current output
+		fmt.Print("\033[J")
 
 		select {
 		case <-ctx.Done():
