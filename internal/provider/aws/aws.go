@@ -148,6 +148,21 @@ func New(profile, region string) *Provider {
 	}
 }
 
+// Profile returns the active AWS profile name.
+func (p *Provider) Profile() string {
+	return p.profile
+}
+
+// SetProfile overrides the active AWS profile name.
+func (p *Provider) SetProfile(profile string) {
+	p.profile = profile
+}
+
+// Region returns the active AWS region name.
+func (p *Provider) Region() string {
+	return p.region
+}
+
 // EnsureCredentials verifies session credentials, calling prompt if authentication is required.
 func (p *Provider) EnsureCredentials(ctx context.Context, prompt func(string, bool) (string, error)) error {
 	if p.checkSessionFunc != nil {
@@ -294,7 +309,7 @@ func (p *Provider) DialTunnel(ctx context.Context, target *tunnel.Target) (net.C
 	success := false
 	var sessionID string
 
-	scanCtx, scanCancel := context.WithTimeout(ctx, 15*time.Second)
+	scanCtx, scanCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer scanCancel()
 
 	errChan := make(chan error, 1)

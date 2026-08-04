@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/guppshub/cx-cli/internal/config"
 	"github.com/guppshub/cx-cli/internal/connection"
 	awsprovider "github.com/guppshub/cx-cli/internal/provider/aws"
 	"github.com/guppshub/cx-cli/internal/resource"
@@ -23,6 +25,7 @@ var (
 	rdsPortFlag       int
 	rdsForegroundFlag bool
 	rdsServerModeFlag bool
+	rdsRefreshFlag    bool
 )
 
 // rdsCmd represents the rds command
@@ -105,6 +108,114 @@ var rdsCmd = &cobra.Command{
 		if dbResource == nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to resolve RDS database resource\n")
 			os.Exit(1)
+		}
+
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to load config: %v\n", err)
+			os.Exit(1)
+		}
+		wsName := cfg.Current
+
+		var tokenExpiration string
+
+		// Handle MFA and STS temporary credentials if enabled
+		if dbResource.MFA {
+			cacheKey := fmt.Sprintf("%s/%s", wsName, awsProvider.Profile())
+			stsProfileName := awsProvider.Profile() + "-sts"
+			if awsProvider.Profile() == "" {
+				stsProfileName = "default-sts"
+			}
+
+			if rdsServerModeFlag {
+				// Server mode: read from cache directly, no prompts
+				stsCache, err := awsprovider.LoadSTSCache()
+				if err == nil && stsCache != nil {
+					if creds, ok := stsCache.Credentials[cacheKey]; ok {
+						tokenExpiration = creds.Expiration.Format(time.RFC3339)
+						// Ensure the background session uses the STS profile
+						_ = awsprovider.UpdateAWSCredentialsFile(stsProfileName, &creds)
+						awsProvider.SetProfile(stsProfileName)
+					}
+				}
+			} else {
+				// Client mode: load cached keys or prompt user for MFA code
+				stsCache, err := awsprovider.LoadSTSCache()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error loading STS cache: %v\n", err)
+					os.Exit(1)
+				}
+
+				creds, ok := stsCache.Credentials[cacheKey]
+
+				if ok && !rdsRefreshFlag && time.Now().Add(5*time.Minute).Before(creds.Expiration) {
+					// Use valid cached credentials
+					_ = os.Setenv("AWS_ACCESS_KEY_ID", creds.AccessKeyID)
+					_ = os.Setenv("AWS_SECRET_ACCESS_KEY", creds.SecretAccessKey)
+					_ = os.Setenv("AWS_SESSION_TOKEN", creds.SessionToken)
+					tokenExpiration = creds.Expiration.Format(time.RFC3339)
+
+					// Write credentials to ~/.aws/credentials and swap active profile
+					if err := awsprovider.UpdateAWSCredentialsFile(stsProfileName, &creds); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to update AWS credentials file: %v\n", err)
+					}
+					awsProvider.SetProfile(stsProfileName)
+				} else {
+					// Need to authenticate
+					mfaSerial := dbResource.MFASerial
+					if mfaSerial == "" {
+						fmt.Println("Auto-discovering AWS MFA device ARN...")
+						serial, err := awsProvider.ListMFADevices(ctx)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "Error discovering MFA device: %v\n", err)
+							os.Exit(1)
+						}
+						mfaSerial = serial
+					}
+
+					fmt.Printf("Enter AWS MFA Code (Device: %s): ", mfaSerial)
+					var mfaCode string
+					_, err = fmt.Scanln(&mfaCode)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error reading MFA code: %v\n", err)
+						os.Exit(1)
+					}
+					mfaCode = strings.TrimSpace(mfaCode)
+
+					fmt.Println("Exchanging code for temporary AWS STS credentials...")
+					stsCreds, err := awsProvider.GetSessionToken(ctx, mfaSerial, mfaCode, dbResource.MFADuration)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error: failed to get session token: %v\n", err)
+						os.Exit(1)
+					}
+
+					// Cache new credentials
+					cacheVal := awsprovider.STSCredentials{
+						AccessKeyID:     stsCreds.AccessKeyID,
+						SecretAccessKey: stsCreds.SecretAccessKey,
+						SessionToken:    stsCreds.SessionToken,
+						Expiration:      stsCreds.Expiration,
+					}
+					stsCache.Credentials[cacheKey] = cacheVal
+					if err := awsprovider.SaveSTSCache(stsCache); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to save STS cache: %v\n", err)
+					}
+
+					// Inject into active environment variables
+					_ = os.Setenv("AWS_ACCESS_KEY_ID", stsCreds.AccessKeyID)
+					_ = os.Setenv("AWS_SECRET_ACCESS_KEY", stsCreds.SecretAccessKey)
+					_ = os.Setenv("AWS_SESSION_TOKEN", stsCreds.SessionToken)
+					tokenExpiration = stsCreds.Expiration.Format(time.RFC3339)
+
+					// Write credentials to ~/.aws/credentials and swap active profile
+					if err := awsprovider.UpdateAWSCredentialsFile(stsProfileName, &cacheVal); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to update AWS credentials file: %v\n", err)
+					}
+					awsProvider.SetProfile(stsProfileName)
+
+					fmt.Println("✔ AWS STS credentials acquired, cached, and updated in ~/.aws/credentials successfully.")
+				}
+			}
 		}
 
 		sPath, err := state.Path()
@@ -229,6 +340,7 @@ var rdsCmd = &cobra.Command{
 						Profile:      profileStr,
 						Region:       regionStr,
 						SessionID:    meta.SessionID,
+						Expiration:   tokenExpiration,
 					})
 				},
 			})
@@ -268,6 +380,7 @@ func init() {
 	rdsCmd.Flags().IntVarP(&rdsPortFlag, "port", "p", 0, "Local port override")
 	rdsCmd.Flags().BoolVarP(&rdsForegroundFlag, "foreground", "f", false, "Run tunnel in the foreground")
 	rdsCmd.Flags().BoolVar(&rdsServerModeFlag, "server", false, "Internal use only: start background tunnel server")
+	rdsCmd.Flags().BoolVarP(&rdsRefreshFlag, "refresh", "r", false, "Force MFA token code prompt and refresh session token cache")
 	_ = rdsCmd.Flags().MarkHidden("server")
 	rootCmd.AddCommand(rdsCmd)
 }

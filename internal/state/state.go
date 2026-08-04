@@ -29,6 +29,7 @@ type ConnectionMetadata struct {
 	Profile      string `json:"profile,omitempty"`
 	Region       string `json:"region,omitempty"`
 	SessionID    string `json:"session_id,omitempty"`
+	Expiration   string `json:"expiration,omitempty"`
 }
 
 // Manager manages loading and saving of the runtime state file.

@@ -36,6 +36,10 @@ workspaces:
           port: 5432
           local_port: 5432 # Preferred local port to bind to
           # Optional: bastion_instance_id override
+          # Optional: Enable MFA and STS token caching:
+          # mfa: true
+          # mfa_serial: arn:aws:iam::123456789012:mfa/username
+          # mfa_duration: 28800 # in seconds (default is 3600/1 hour)
 
       # Redis cache resources (connect via: cx redis <name>)
       redis:
