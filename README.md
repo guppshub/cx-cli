@@ -75,3 +75,15 @@ workspaces:
     region: us-east-1
     ec2_startup_command: "sudo su - ubuntu"
 ```
+
+### Monitor ECS Service Tasks
+To interactively select an ECS cluster and service, and print its active and stopped tasks:
+```bash
+cx ecs
+```
+To monitor task states in real-time (auto-refreshing every 5 seconds):
+```bash
+cx ecs --watch
+# Or using the short flag:
+cx ecs -w
+```
