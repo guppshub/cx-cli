@@ -96,11 +96,6 @@ var statusCmd = &cobra.Command{
 	},
 }
 
-var (
-	greenStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	redStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-)
-
 func init() {
 	rootCmd.AddCommand(statusCmd)
 }

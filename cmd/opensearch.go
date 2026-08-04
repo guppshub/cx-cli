@@ -18,6 +18,7 @@ import (
 	"github.com/guppshub/cx-cli/internal/state"
 	"github.com/guppshub/cx-cli/internal/tunnel"
 	"github.com/guppshub/cx-cli/internal/ui/picker"
+	"github.com/guppshub/cx-cli/internal/ui/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -71,7 +72,6 @@ var opensearchCmd = &cobra.Command{
 
 			if len(osList) == 1 {
 				osResource = &osList[0]
-				fmt.Printf("Using OpenSearch resource: %s\n", osResource.Name)
 			} else {
 				var rows []picker.Row
 				for _, o := range osList {
@@ -92,7 +92,7 @@ var opensearchCmd = &cobra.Command{
 					os.Exit(1)
 				}
 				if selectedID == "" {
-					fmt.Println("Selection cancelled")
+					printError("Selection cancelled")
 					os.Exit(0)
 				}
 
@@ -213,7 +213,7 @@ var opensearchCmd = &cobra.Command{
 					}
 					awsProvider.SetProfile(stsProfileName)
 
-					fmt.Println("✔ AWS STS credentials acquired, cached, and updated in ~/.aws/credentials successfully.")
+					printSuccess("AWS STS credentials acquired, cached, and updated in ~/.aws/credentials successfully.")
 				}
 			}
 		}
@@ -232,7 +232,7 @@ var opensearchCmd = &cobra.Command{
 			if err == nil && conn != nil {
 				// If the connection is not in a healthy or recovering state, we clean it up and restart
 				if conn.State == string(connection.StateStopped) || conn.State == string(connection.StateFailed) {
-					fmt.Printf("Existing tunnel for %q is in %s state. Cleaning up and restarting...\n", osResource.Name, conn.State)
+					printWarning("Existing tunnel for %s is in %s state. Cleaning up and restarting...", boldStyle.Render(osResource.Name), conn.State)
 					connection.TerminateProcessGroup(conn.Pid, 1000*time.Millisecond)
 					_ = connMgr.DeregisterState(conn.ConnectionID)
 				} else {
@@ -240,8 +240,8 @@ var opensearchCmd = &cobra.Command{
 					if stateStr == "" {
 						stateStr = "Healthy"
 					}
-					fmt.Printf("Tunnel to OpenSearch %q is already running in background (PID: %d, State: %s).\n", conn.Name, conn.Pid, stateStr)
-					fmt.Printf("OpenSearch %q is listening on local port %d.\n", conn.Name, conn.LocalPort)
+					printInfo("Tunnel to OpenSearch %s is already running in background (PID: %s, State: %s).", boldStyle.Render(conn.Name), boldStyle.Render(fmt.Sprint(conn.Pid)), stateStr)
+					printInfo("OpenSearch %s is listening on local port %s.", boldStyle.Render(conn.Name), boldStyle.Render(fmt.Sprint(conn.LocalPort)))
 					return
 				}
 			}
@@ -260,46 +260,71 @@ var opensearchCmd = &cobra.Command{
 			PreferredLocalPort: localPort,
 		}
 
-		// 3. Handshake connectivity check (only in foreground/parent mode!)
+		// 3. Establish tunnel connection (only in foreground/parent mode!)
 		if !osServerModeFlag {
-			// Verify bastion and SSM connectivity with a quick handshake
-			fmt.Printf("Verifying connection to bastion %s...\n", target.BastionInstanceID)
+			spin := spinner.Start(fmt.Sprintf("Establishing tunnel to OpenSearch %s...", boldStyle.Render(osResource.Name)))
+
+			// Step A: Preflight verification
 			if err := connMgr.PreflightHandshake(ctx, awsProvider, target, "opensearch"); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				spin.Stop()
+				printDetailedError("OpenSearch", osResource.Name, target, err)
 				os.Exit(1)
 			}
-			fmt.Println("Connection handshake successful.")
 
 			if !osForegroundFlag {
-				// Launch detached background daemon
+				// Step B: Background daemon
 				binPath, err := os.Executable()
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: failed to resolve binary path: %v\n", err)
+					spin.Stop()
+					printDetailedError("OpenSearch", osResource.Name, target, fmt.Errorf("failed to resolve binary path: %w", err))
 					os.Exit(1)
 				}
 
 				logDir := filepath.Join(filepath.Dir(sPath), "logs")
-				_ = os.MkdirAll(logDir, 0755)
+				if err := os.MkdirAll(logDir, 0755); err != nil {
+					spin.Stop()
+					printDetailedError("OpenSearch", osResource.Name, target, fmt.Errorf("failed to create log directory: %w", err))
+					os.Exit(1)
+				}
 
-				fmt.Println("Launching background OpenSearch tunnel daemon...")
 				daemon, err := connection.SpawnDaemon(binPath, "opensearch", osResource.Name, localPort, logDir)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					spin.Stop()
+					printDetailedError("OpenSearch", osResource.Name, target, fmt.Errorf("failed to spawn background daemon: %w", err))
 					os.Exit(1)
 				}
 
-				// Wait up to 5 seconds to verify that the daemon registers itself successfully in state.json
 				finalLocalPort, err := daemon.VerifyRegistration(stateStore, 5*time.Second)
 				if err != nil {
-					// Read stderr log output to display to the user
+					spin.Stop()
+					var logMsg string
 					logContent, _ := os.ReadFile(daemon.ErrorLogPath())
-					fmt.Fprintf(os.Stderr, "Error: background daemon failed to start. Logs:\n%s\n", string(logContent))
+					if len(logContent) > 0 {
+						logMsg = string(logContent)
+					} else {
+						logMsg = "background daemon failed to initialize (check logs)"
+					}
+					printDetailedError("OpenSearch", osResource.Name, target, fmt.Errorf("%s", logMsg))
 					os.Exit(1)
 				}
 
-				fmt.Printf("✔ OpenSearch tunnel successfully started in background!\n")
-				fmt.Printf("Local Bind: localhost:%d\n", finalLocalPort)
-				fmt.Printf("View logs at: tail -f %s\n", daemon.LogPath())
+				spin.Stop()
+				printSuccess("Tunnel connection established! Listening on local port %d.", finalLocalPort)
+				return
+			} else {
+				// Step C: Foreground direct tunnel
+				tunnelConn, err := awsProvider.DialTunnel(ctx, target)
+				if err != nil {
+					spin.Stop()
+					printDetailedError("OpenSearch", osResource.Name, target, err)
+					os.Exit(1)
+				}
+				defer func() { _ = tunnelConn.Close() }()
+
+				spin.Stop()
+				printSuccess("Tunnel connection established! Listening on local port %d (Press Ctrl+C to terminate).", target.PreferredLocalPort)
+				<-ctx.Done()
+				printInfo("Terminating tunnel connection...")
 				return
 			}
 		}
@@ -357,19 +382,7 @@ var opensearchCmd = &cobra.Command{
 			return
 		}
 
-		// 5. Foreground mode: direct tunnel
-		tunnelConn, err := awsProvider.DialTunnel(ctx, target)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error starting tunnel: %v\n", err)
-			os.Exit(1)
-		}
-		defer func() { _ = tunnelConn.Close() }()
 
-		fmt.Printf("Tunneling OpenSearch %s through local port %d...\n", osResource.Name, target.PreferredLocalPort)
-		fmt.Println("Press Ctrl+C to terminate connection.")
-
-		<-ctx.Done()
-		fmt.Println("Terminating tunnel connection...")
 	},
 }
 

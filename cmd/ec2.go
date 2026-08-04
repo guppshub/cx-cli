@@ -7,6 +7,7 @@ import (
 
 	"github.com/guppshub/cx-cli/internal/provider/aws"
 	"github.com/guppshub/cx-cli/internal/ui/picker"
+	"github.com/guppshub/cx-cli/internal/ui/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -25,8 +26,9 @@ var ec2Cmd = &cobra.Command{
 		}
 
 		// 2. Fetch EC2 instances
-		fmt.Println("Fetching EC2 instances...")
+		spin := spinner.Start("Fetching EC2 instances...")
 		instances, err := awsProvider.FetchEC2Instances(ctx)
+		spin.Stop()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)

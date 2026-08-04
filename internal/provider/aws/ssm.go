@@ -2,6 +2,7 @@ package aws
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -42,11 +43,34 @@ func (p *Provider) ConnectSSM(instanceID string, startupCmd string) error {
 	cmd := exec.Command("aws", args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = &stderrFilter{w: os.Stderr}
 
 	// Ignore Ctrl+C in the host cx process so that it is handled solely by the SSM session
 	signal.Ignore(os.Interrupt)
 	defer signal.Reset(os.Interrupt)
 
 	return cmd.Run()
+}
+
+type stderrFilter struct {
+	w io.Writer
+}
+
+func (f *stderrFilter) Write(p []byte) (n int, err error) {
+	s := string(p)
+	if strings.Contains(s, "Starting session with SessionId:") {
+		// Filter out the specific line
+		lines := strings.Split(s, "\n")
+		var out []string
+		for _, l := range lines {
+			if !strings.Contains(l, "Starting session with SessionId:") {
+				out = append(out, l)
+			}
+		}
+		if len(out) > 0 {
+			_, err = f.w.Write([]byte(strings.Join(out, "\n")))
+		}
+		return len(p), err
+	}
+	return f.w.Write(p)
 }

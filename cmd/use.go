@@ -72,7 +72,7 @@ var useCmd = &cobra.Command{
 			}
 
 			if selectedID == "" {
-				fmt.Println("Selection cancelled")
+				printError("Selection cancelled")
 				os.Exit(0)
 			}
 			workspaceName = selectedID

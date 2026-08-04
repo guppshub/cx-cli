@@ -15,6 +15,7 @@ import (
 	"github.com/guppshub/cx-cli/internal/config"
 	"github.com/guppshub/cx-cli/internal/provider/aws"
 	"github.com/guppshub/cx-cli/internal/ui/picker"
+	"github.com/guppshub/cx-cli/internal/ui/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -102,8 +103,9 @@ var ecsCmd = &cobra.Command{
 		if ecsWatchFlag {
 			runWatchMode(ctx, awsProvider, clusterName, serviceName)
 		} else {
-			fmt.Println("Fetching task states from AWS...")
+			spin := spinner.Start("Fetching task states from AWS...")
 			tasks, err = awsProvider.FetchECSTasks(ctx, clusterName, serviceName)
+			spin.Stop()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to fetch tasks: %v\n", err)
 				os.Exit(1)
@@ -153,7 +155,9 @@ func handleCacheConfiguration(ctx context.Context, wsName string, ws *config.Wor
 			os.Exit(1)
 		}
 
+		spin := spinner.Start("Fetching ECS clusters from AWS...")
 		clusters, err := awsProvider.FetchECSClusters(ctx)
+		spin.Stop()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to fetch clusters: %v\n", err)
 			os.Exit(1)
@@ -264,15 +268,38 @@ func updateCacheData(wsName, clusterName string, clusters []aws.ECSCluster, serv
 }
 
 func runWatchMode(ctx context.Context, p *aws.Provider, cluster, service string) {
+	// Disable terminal echo to prevent scroll wheel escape sequences or keypresses from leaking
+	cmdDisable := exec.Command("stty", "-echo")
+	cmdDisable.Stdin = os.Stdin
+	_ = cmdDisable.Run()
+
+	defer func() {
+		cmdEnable := exec.Command("stty", "echo")
+		cmdEnable.Stdin = os.Stdin
+		_ = cmdEnable.Run()
+	}()
+
 	// Use alternate screen buffer, hide cursor, and clear screen
 	fmt.Print("\033[?1049h\033[?25l\033[H\033[2J")
 	defer fmt.Print("\033[?1049l\033[?25h") // Restore screen and cursor on exit
 
+	first := true
 	for {
-		tasks, err := p.FetchECSTasks(ctx, cluster, service)
+		var tasks []aws.ECSTask
+		var err error
 
-		// Reposition cursor to top-left and clear the screen before rendering
-		fmt.Print("\033[H\033[J")
+		if first {
+			spin := spinner.Start("Fetching initial task status...")
+			tasks, err = p.FetchECSTasks(ctx, cluster, service)
+			spin.Stop()
+			// Reposition cursor to top-left and clear the screen before rendering
+			fmt.Print("\033[H\033[J")
+			first = false
+		} else {
+			tasks, err = p.FetchECSTasks(ctx, cluster, service)
+			// Reposition cursor to top-left and clear the screen before rendering
+			fmt.Print("\033[H\033[J")
+		}
 
 		if err != nil {
 			if ctx.Err() != nil {
@@ -444,8 +471,9 @@ func resolveClusterAndService(ctx context.Context, awsProvider *aws.Provider, ws
 			serviceName = selectedID
 		} else {
 			// Cache is active but empty; fetch services from AWS, cache them, and proceed
-			fmt.Printf("Cache empty. Fetching services for default cluster %q from AWS...\n", clusterName)
+			spin := spinner.Start(fmt.Sprintf("Fetching services for cluster %q from AWS...", clusterName))
 			services, err := awsProvider.FetchECSServices(ctx, clusterName)
+			spin.Stop()
 			if err != nil {
 				return "", "", err
 			}
@@ -475,8 +503,9 @@ func resolveClusterAndService(ctx context.Context, awsProvider *aws.Provider, ws
 		}
 	} else {
 		// standard query flow (no cache or explicit refresh)
-		fmt.Println("Fetching ECS clusters from AWS...")
+		spinClusters := spinner.Start("Fetching ECS clusters from AWS...")
 		clusters, err := awsProvider.FetchECSClusters(ctx)
+		spinClusters.Stop()
 		if err != nil {
 			return "", "", err
 		}
@@ -506,8 +535,9 @@ func resolveClusterAndService(ctx context.Context, awsProvider *aws.Provider, ws
 			clusterName = selectedID
 		}
 
-		fmt.Println("Fetching ECS services from AWS...")
+		spinServices := spinner.Start("Fetching ECS services from AWS...")
 		services, err := awsProvider.FetchECSServices(ctx, clusterName)
+		spinServices.Stop()
 		if err != nil {
 			return "", "", err
 		}
@@ -608,8 +638,9 @@ var ecsLogsCmd = &cobra.Command{
 			if ecsCfg.DefaultCluster != "" {
 				clusterName = ecsCfg.DefaultCluster
 			} else {
-				// Search for which cluster contains this service, or prompt
+				spin := spinner.Start("Fetching ECS clusters from AWS...")
 				clusters, err := awsProvider.FetchECSClusters(ctx)
+				spin.Stop()
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					os.Exit(1)
@@ -635,7 +666,7 @@ var ecsLogsCmd = &cobra.Command{
 						os.Exit(1)
 					}
 					if selectedID == "" {
-						fmt.Println("Selection cancelled")
+						printError("Selection cancelled")
 						os.Exit(0)
 					}
 					clusterName = selectedID
@@ -763,7 +794,7 @@ func init() {
 	ecsCmd.Flags().StringVar(&ecsCacheFlag, "cache", "", "Configure ECS caching for the workspace ('true' or 'false')")
 	ecsCmd.Flags().StringVar(&ecsWorkspaceFlag, "ws", "", "AWS workspace override")
 	ecsCmd.Flags().BoolVarP(&ecsRefreshFlag, "refresh", "r", false, "Force a refresh of cached ECS clusters and services")
-	
+
 	ecsLogsCmd.Flags().StringVarP(&ecsLogsSinceFlag, "since", "s", "10m", "Tailing history window (e.g. 10m, 1h, 1d)")
 	ecsLogsCmd.Flags().StringVarP(&ecsLogsFilterFlag, "filter", "f", "", "Filter pattern string to search/match")
 	ecsCmd.AddCommand(ecsLogsCmd)

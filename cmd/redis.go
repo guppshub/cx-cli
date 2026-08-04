@@ -17,6 +17,7 @@ import (
 	"github.com/guppshub/cx-cli/internal/state"
 	"github.com/guppshub/cx-cli/internal/tunnel"
 	"github.com/guppshub/cx-cli/internal/ui/picker"
+	"github.com/guppshub/cx-cli/internal/ui/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -74,7 +75,6 @@ var redisCmd = &cobra.Command{
 
 			if len(redisList) == 1 {
 				redisResource = &redisList[0]
-				fmt.Printf("Using Redis resource: %s\n", redisResource.Name)
 			} else {
 				var rows []picker.Row
 				for _, r := range redisList {
@@ -95,7 +95,7 @@ var redisCmd = &cobra.Command{
 					os.Exit(1)
 				}
 				if selectedID == "" {
-					fmt.Println("Selection cancelled")
+					printError("Selection cancelled")
 					os.Exit(0)
 				}
 
@@ -128,7 +128,7 @@ var redisCmd = &cobra.Command{
 			if err == nil && conn != nil {
 				// If the connection is not in a healthy or recovering state, we clean it up and restart
 				if conn.State == string(connection.StateStopped) || conn.State == string(connection.StateFailed) {
-					fmt.Printf("Existing tunnel for %q is in %s state. Cleaning up and restarting...\n", redisResource.Name, conn.State)
+					printWarning("Existing tunnel for %s is in %s state. Cleaning up and restarting...", boldStyle.Render(redisResource.Name), conn.State)
 					connection.TerminateProcessGroup(conn.Pid, 1000*time.Millisecond)
 					_ = connMgr.DeregisterState(conn.ConnectionID)
 				} else {
@@ -136,8 +136,8 @@ var redisCmd = &cobra.Command{
 					if stateStr == "" {
 						stateStr = "Healthy"
 					}
-					fmt.Printf("Tunnel to Redis %q is already running in background (PID: %d, State: %s).\n", conn.Name, conn.Pid, stateStr)
-					fmt.Printf("Redis %q is listening on local port %d.\n", conn.Name, conn.LocalPort)
+					printInfo("Tunnel to Redis %s is already running in background (PID: %s, State: %s).", boldStyle.Render(conn.Name), boldStyle.Render(fmt.Sprint(conn.Pid)), stateStr)
+					printInfo("Redis %s is listening on local port %s.", boldStyle.Render(conn.Name), boldStyle.Render(fmt.Sprint(conn.LocalPort)))
 					return
 				}
 			}
@@ -160,48 +160,71 @@ var redisCmd = &cobra.Command{
 			PreferredLocalPort: localPort,
 		}
 
-		// 3. Handshake connectivity check (only in foreground/parent mode!)
+		// 3. Establish tunnel connection (only in foreground/parent mode!)
 		if !redisServerModeFlag {
-			// Verify bastion and SSM connectivity with a quick handshake
-			fmt.Printf("Verifying connection to bastion %s...\n", target.BastionInstanceID)
+			spin := spinner.Start(fmt.Sprintf("Establishing tunnel to Redis %s...", boldStyle.Render(redisResource.Name)))
+
+			// Step A: Preflight verification
 			if err := connMgr.PreflightHandshake(ctx, awsProvider, target, "redis"); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				spin.Stop()
+				printDetailedError("Redis", redisResource.Name, target, err)
 				os.Exit(1)
 			}
-			fmt.Println("Connection handshake successful.")
 
 			if !redisForegroundFlag {
-				// Launch detached background daemon
+				// Step B: Background daemon
 				logDir := filepath.Join(filepath.Dir(sPath), "logs")
 				if err := os.MkdirAll(logDir, 0755); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: failed to create log directory: %v\n", err)
+					spin.Stop()
+					printDetailedError("Redis", redisResource.Name, target, fmt.Errorf("failed to create log directory: %w", err))
 					os.Exit(1)
 				}
 
 				daemon, err := connection.SpawnDaemon(os.Args[0], "redis", redisResource.Name, localPort, logDir)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error spawning background daemon: %v\n", err)
+					spin.Stop()
+					printDetailedError("Redis", redisResource.Name, target, fmt.Errorf("failed to spawn background daemon: %w", err))
 					os.Exit(1)
 				}
 
-				fmt.Printf("Starting background tunnel daemon for Redis %s (port %d)...\n", redisResource.Name, localPort)
 				finalLocalPort, err := daemon.VerifyRegistration(stateStore, 5*time.Second)
 				if err != nil {
-					fmt.Fprintln(os.Stderr, "Error: background daemon failed to initialize. Check logs:")
+					spin.Stop()
+					var logMsg string
 					logData, _ := os.ReadFile(daemon.LogPath())
-					fmt.Fprintf(os.Stderr, "%s\n", string(logData))
+					if len(logData) > 0 {
+						logMsg = string(logData)
+					}
 					if daemon.ErrorLogPath() != daemon.LogPath() {
 						errData, _ := os.ReadFile(daemon.ErrorLogPath())
 						if len(errData) > 0 {
-							fmt.Fprintf(os.Stderr, "Errors:\n%s\n", string(errData))
+							logMsg = logMsg + "\n" + string(errData)
 						}
 					}
+					if logMsg == "" {
+						logMsg = "background daemon failed to initialize (check logs)"
+					}
+					printDetailedError("Redis", redisResource.Name, target, fmt.Errorf("%s", logMsg))
 					os.Exit(1)
 				}
 
-				fmt.Printf("Success! Tunnel established in background.\n")
-				fmt.Printf("Redis %q is listening on local port %d.\n", redisResource.Name, finalLocalPort)
-				fmt.Printf("Log file: %s\n", daemon.LogPath())
+				spin.Stop()
+				printSuccess("Tunnel connection established! Listening on local port %d.", finalLocalPort)
+				return
+			} else {
+				// Step C: Foreground direct tunnel
+				tunnelConn, err := awsProvider.DialTunnel(ctx, target)
+				if err != nil {
+					spin.Stop()
+					printDetailedError("Redis", redisResource.Name, target, err)
+					os.Exit(1)
+				}
+				defer func() { _ = tunnelConn.Close() }()
+
+				spin.Stop()
+				printSuccess("Tunnel connection established! Listening on local port %d (Press Ctrl+C to terminate).", target.PreferredLocalPort)
+				<-ctx.Done()
+				printInfo("Terminating tunnel connection...")
 				return
 			}
 		}
@@ -256,19 +279,7 @@ var redisCmd = &cobra.Command{
 			return
 		}
 
-		// 5. Foreground mode: direct tunnel
-		tunnelConn, err := awsProvider.DialTunnel(ctx, target)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error starting tunnel: %v\n", err)
-			os.Exit(1)
-		}
-		defer func() { _ = tunnelConn.Close() }()
 
-		fmt.Printf("Tunneling Redis %s through local port %d...\n", redisResource.Name, target.PreferredLocalPort)
-		fmt.Println("Press Ctrl+C to terminate connection.")
-
-		<-ctx.Done()
-		fmt.Println("Terminating tunnel connection...")
 	},
 }
 

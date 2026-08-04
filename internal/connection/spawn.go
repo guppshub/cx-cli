@@ -41,7 +41,7 @@ func (d *Daemon) VerifyRegistration(stateStore *state.Manager, timeout time.Dura
 		}
 
 		for _, conn := range s.ActiveConnections {
-			if d.matches(conn) {
+			if d.matches(conn) && conn.LocalPort > 0 && conn.State == "Healthy" {
 				return conn.LocalPort, nil
 			}
 		}

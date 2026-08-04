@@ -3,9 +3,12 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/guppshub/cx-cli/internal/config"
 	"github.com/guppshub/cx-cli/internal/provider/aws"
+	"github.com/guppshub/cx-cli/internal/tunnel"
 )
 
 // initAWSProvider resolves the active workspace configuration, initializes the AWS provider, and ensures credentials are valid.
@@ -67,4 +70,47 @@ func readLineWithContext(ctx context.Context) (string, error) {
 	case res := <-ch:
 		return res.text, res.err
 	}
+}
+
+var (
+	// Styling helper variables
+	boldStyle    = lipgloss.NewStyle().Bold(true)
+	blueStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	greenStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	yellowStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	redStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+)
+
+// printSuccess formats and prints a success checkmark line.
+func printSuccess(format string, a ...interface{}) {
+	fmt.Printf("%s %s\n", greenStyle.Render("✔"), fmt.Sprintf(format, a...))
+}
+
+// printInfo formats and prints an informational bullet line.
+func printInfo(format string, a ...interface{}) {
+	fmt.Printf("%s %s\n", blueStyle.Render("ℹ"), fmt.Sprintf(format, a...))
+}
+
+// printWarning formats and prints a warning bullet line.
+func printWarning(format string, a ...interface{}) {
+	fmt.Printf("%s %s\n", yellowStyle.Render("⚠"), fmt.Sprintf(format, a...))
+}
+
+// printError formats and prints an error cross line.
+func printError(format string, a ...interface{}) {
+	fmt.Printf("%s %s\n", redStyle.Render("✖"), fmt.Sprintf(format, a...))
+}
+
+// printDetailedError prints a structured, high-fidelity error representation to Stderr.
+func printDetailedError(resType, resName string, target *tunnel.Target, err error) {
+	fmt.Fprintln(os.Stderr)
+	printError("Connection failed!")
+	fmt.Fprintf(os.Stderr, "  %-18s %s (%s)\n", boldStyle.Render("Resource:"), resName, resType)
+	if target != nil {
+		fmt.Fprintf(os.Stderr, "  %-18s %s\n", boldStyle.Render("Bastion Host:"), target.BastionInstanceID)
+		fmt.Fprintf(os.Stderr, "  %-18s %s:%d\n", boldStyle.Render("Target Endpoint:"), target.RemoteHost, target.RemotePort)
+		fmt.Fprintf(os.Stderr, "  %-18s %d\n", boldStyle.Render("Local Port:"), target.PreferredLocalPort)
+	}
+	fmt.Fprintf(os.Stderr, "  %-18s %v\n", boldStyle.Render("Error Details:"), err)
+	fmt.Fprintln(os.Stderr)
 }
