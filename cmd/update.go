@@ -47,6 +47,12 @@ var updateCmd = &cobra.Command{
 
 		fmt.Printf("A newer version of cx is available: %s (current: %s).\n", release.TagName, Version)
 
+		// Check write permissions to installation directory early
+		if err := update.CheckWritePermission(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
 		downloadURL, assetName, err := update.FindAsset(release)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)

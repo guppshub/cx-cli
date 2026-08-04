@@ -135,6 +135,22 @@ func FindAsset(release *GitHubRelease) (string, string, error) {
 	return "", "", fmt.Errorf("no release asset found for platform %s-%s (expected name: %s)", runtime.GOOS, runtime.GOARCH, expectedName)
 }
 
+// CheckWritePermission verifies if the process has permission to write to the active executable's directory.
+func CheckWritePermission() error {
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to resolve active executable path: %w", err)
+	}
+	execDir := filepath.Dir(execPath)
+	testTmpFile, err := os.CreateTemp(execDir, "cx_perm_test_*.tmp")
+	if err != nil {
+		return fmt.Errorf("insufficient permissions to modify the installation directory at %s (try running with sudo)", execDir)
+	}
+	_ = testTmpFile.Close()
+	_ = os.Remove(testTmpFile.Name())
+	return nil
+}
+
 // SelfUpdate downloads the new binary from the specified URL and replaces the currently running executable.
 func SelfUpdate(ctx context.Context, downloadURL string) error {
 	execPath, err := os.Executable()
@@ -145,6 +161,11 @@ func SelfUpdate(ctx context.Context, downloadURL string) error {
 }
 
 func selfUpdateWithPath(ctx context.Context, downloadURL, execPath string) error {
+	// 1. Verify write permissions to the executable directory early
+	if err := CheckWritePermission(); err != nil {
+		return err
+	}
+
 	// 2. Resolve target directory
 	execDir := filepath.Dir(execPath)
 

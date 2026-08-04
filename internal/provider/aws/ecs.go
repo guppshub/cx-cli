@@ -24,10 +24,10 @@ type ECSService struct {
 
 // ECSTask represents parsed ECS task status information.
 type ECSTask struct {
-	ID            string    // Short 12-char Task ID (UUID)
-	ARN           string    // Full Task ARN
-	LastStatus    string    // RUNNING, PENDING, STOPPED, etc.
-	HealthStatus  string    // HEALTHY, UNHEALTHY, UNKNOWN
+	ID            string // Short 12-char Task ID (UUID)
+	ARN           string // Full Task ARN
+	LastStatus    string // RUNNING, PENDING, STOPPED, etc.
+	HealthStatus  string // HEALTHY, UNHEALTHY, UNKNOWN
 	CreatedAt     time.Time
 	StartedAt     time.Time
 	StoppedAt     time.Time
@@ -122,14 +122,14 @@ func (p *Provider) FetchECSServices(ctx context.Context, clusterName string) ([]
 
 type rawDescribeTasksResponse struct {
 	Tasks []struct {
-		TaskArn      string    `json:"taskArn"`
-		LastStatus   string    `json:"lastStatus"`
-		HealthStatus string    `json:"healthStatus"`
-		CreatedAt    time.Time `json:"createdAt"`
-		StartedAt    time.Time `json:"startedAt"`
-		StoppedAt    time.Time `json:"stoppedAt"`
+		TaskArn       string    `json:"taskArn"`
+		LastStatus    string    `json:"lastStatus"`
+		HealthStatus  string    `json:"healthStatus"`
+		CreatedAt     time.Time `json:"createdAt"`
+		StartedAt     time.Time `json:"startedAt"`
+		StoppedAt     time.Time `json:"stoppedAt"`
 		StoppedReason string    `json:"stoppedReason"`
-		Containers   []struct {
+		Containers    []struct {
 			Name     string `json:"name"`
 			ExitCode *int   `json:"exitCode"`
 			Reason   string `json:"reason"`
