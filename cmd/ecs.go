@@ -405,7 +405,6 @@ func updateCacheData(wsName, clusterName string, clusters []aws.ECSCluster, serv
 	_ = aws.SaveCache(cache)
 }
 
-
 func runWatchMode(ctx context.Context, p *aws.Provider, cluster, service string) {
 	for {
 		fmt.Print("\033[H\033[2J") // Clear screen

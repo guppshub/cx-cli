@@ -7,14 +7,14 @@ import (
 	"github.com/guppshub/cx-cli/internal/errors"
 )
 
-func TestResolveDatabase(t *testing.T) {
+func TestResolveRDS(t *testing.T) {
 	workspace := &config.Workspace{
 		Provider: "aws",
 		Raw: map[string]any{
 			"profile": "staging-admin",
 			"region":  "us-east-1",
 			"resources": map[string]any{
-				"databases": []any{
+				"rds": []any{
 					map[string]any{
 						"name":                "mercury",
 						"engine":              "postgres",
@@ -29,7 +29,7 @@ func TestResolveDatabase(t *testing.T) {
 	}
 
 	// 1. Resolve existing database
-	db, err := ResolveDatabase(workspace, "mercury")
+	db, err := ResolveRDS(workspace, "mercury")
 	if err != nil {
 		t.Fatalf("unexpected error resolving mercury: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestResolveDatabase(t *testing.T) {
 	}
 
 	// 2. Resolve non-existent database
-	_, err = ResolveDatabase(workspace, "venus")
+	_, err = ResolveRDS(workspace, "venus")
 	if !errors.Is(err, errors.ErrWorkspaceNotFound) {
 		t.Errorf("expected ErrWorkspaceNotFound for venus, got %v", err)
 	}
@@ -52,7 +52,7 @@ func TestResolveDatabase(t *testing.T) {
 		Provider: "aws",
 		Raw:      map[string]any{},
 	}
-	_, err = ResolveDatabase(emptyWorkspace, "mercury")
+	_, err = ResolveRDS(emptyWorkspace, "mercury")
 	if !errors.Is(err, errors.ErrWorkspaceNotFound) {
 		t.Errorf("expected ErrWorkspaceNotFound for empty workspace, got %v", err)
 	}
@@ -65,7 +65,7 @@ func TestResolveDatabase(t *testing.T) {
 			"region":              "us-east-1",
 			"bastion_instance_id": "i-fallback",
 			"resources": map[string]any{
-				"databases": []any{
+				"rds": []any{
 					map[string]any{
 						"name":     "mercury",
 						"engine":   "postgres",
@@ -76,7 +76,7 @@ func TestResolveDatabase(t *testing.T) {
 			},
 		},
 	}
-	dbFallback, err := ResolveDatabase(fallbackWorkspace, "mercury")
+	dbFallback, err := ResolveRDS(fallbackWorkspace, "mercury")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestResolveDatabase(t *testing.T) {
 			"profile": "staging-admin",
 			"region":  "us-east-1",
 			"resources": map[string]any{
-				"databases": []any{
+				"rds": []any{
 					map[string]any{
 						"name":     "mercury",
 						"engine":   "postgres",
@@ -102,8 +102,49 @@ func TestResolveDatabase(t *testing.T) {
 			},
 		},
 	}
-	_, err = ResolveDatabase(missingBastionWorkspace, "mercury")
+	_, err = ResolveRDS(missingBastionWorkspace, "mercury")
 	if err == nil {
 		t.Error("expected error when bastion instance ID is missing at both levels, but it resolved successfully")
+	}
+}
+
+func TestFetchRDS(t *testing.T) {
+	workspace := &config.Workspace{
+		Provider: "aws",
+		Raw: map[string]any{
+			"profile": "staging-admin",
+			"region":  "us-east-1",
+			"resources": map[string]any{
+				"rds": []any{
+					map[string]any{
+						"name":                "mercury",
+						"engine":              "postgres",
+						"endpoint":            "staging-db.rds.amazonaws.com",
+						"port":                5432,
+						"local_port":          5432,
+						"bastion_instance_id": "i-123456",
+					},
+					map[string]any{
+						"name":     "venus",
+						"engine":   "mysql",
+						"endpoint": "staging-db2.rds.amazonaws.com",
+						"port":     3306,
+					},
+				},
+			},
+		},
+	}
+
+	dbs, err := FetchRDS(workspace)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(dbs) != 2 {
+		t.Fatalf("expected 2 RDS databases, got %d", len(dbs))
+	}
+
+	if dbs[0].Name != "mercury" || dbs[1].Name != "venus" {
+		t.Errorf("unexpected database names order: %s, %s", dbs[0].Name, dbs[1].Name)
 	}
 }

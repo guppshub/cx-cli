@@ -28,8 +28,8 @@ workspaces:
 
     # Catalog of secure resources accessible through the bastion
     resources:
-      # Database resources (connect via: cx db <name>)
-      databases:
+      # RDS database resources (connect via: cx rds <name>)
+      rds:
         - name: sample-postgres
           engine: postgres # Supported engines: postgres, mysql
           endpoint: postgres.example.com

@@ -49,7 +49,7 @@ var statusCmd = &cobra.Command{
 		}
 
 		if len(active) == 0 {
-			fmt.Println("No active database tunnels running.")
+			fmt.Println("No active tunnels running.")
 			return
 		}
 

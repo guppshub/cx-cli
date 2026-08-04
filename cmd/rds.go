@@ -15,37 +15,95 @@ import (
 	"github.com/guppshub/cx-cli/internal/resource"
 	"github.com/guppshub/cx-cli/internal/state"
 	"github.com/guppshub/cx-cli/internal/tunnel"
+	"github.com/guppshub/cx-cli/internal/ui/picker"
 	"github.com/spf13/cobra"
 )
 
 var (
-	portFlag       int
-	foregroundFlag bool
-	serverModeFlag bool
+	rdsPortFlag       int
+	rdsForegroundFlag bool
+	rdsServerModeFlag bool
 )
 
-// dbCmd represents the db command
-var dbCmd = &cobra.Command{
-	Use:   "db [database]",
-	Short: "Establish a secure tunnel to a database resource",
-	Args:  cobra.ExactArgs(1),
+// rdsCmd represents the rds command
+var rdsCmd = &cobra.Command{
+	Use:   "rds [database]",
+	Short: "Establish a secure tunnel to an RDS database resource",
+	Long:  `Establish a secure SSH tunnel to an Amazon RDS database resource configured in your active workspace through a Bastion host.`,
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		dbName := args[0]
-
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
 		// 1. Initialize AWS provider and verify credentials
-		awsProvider, ws, err := initAWSProvider(ctx, serverModeFlag)
+		awsProvider, ws, err := initAWSProvider(ctx, rdsServerModeFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
-		// 2. Resolve database resource details
-		dbResource, err := resource.ResolveDatabase(ws, dbName)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		var dbResource *resource.DatabaseResource
+
+		if len(args) > 0 {
+			// Resolve specified database
+			dbName := args[0]
+			dbResource, err = resource.ResolveRDS(ws, dbName)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			// List and select database resource interactively
+			rdsList, err := resource.FetchRDS(ws)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
+			if len(rdsList) == 0 {
+				fmt.Println("No RDS database resources configured in the active workspace.")
+				os.Exit(0)
+			}
+
+			if len(rdsList) == 1 {
+				dbResource = &rdsList[0]
+				fmt.Printf("Using RDS database resource: %s\n", dbResource.Name)
+			} else {
+				var rows []picker.Row
+				for _, r := range rdsList {
+					rows = append(rows, picker.Row{
+						ID: r.Name,
+						Fields: []string{
+							r.Name,
+							r.Engine,
+							r.Endpoint,
+							fmt.Sprint(r.Port),
+						},
+					})
+				}
+				headers := []string{"RDS Name", "Engine", "Endpoint", "Port"}
+				selectedID, err := picker.SingleSelect("Select RDS Database", headers, rows)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+				if selectedID == "" {
+					fmt.Println("Selection cancelled")
+					os.Exit(0)
+				}
+
+				// Find the selected resource
+				for _, r := range rdsList {
+					if r.Name == selectedID {
+						dbResource = &r
+						break
+					}
+				}
+			}
+		}
+
+		if dbResource == nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to resolve RDS database resource\n")
 			os.Exit(1)
 		}
 
@@ -58,7 +116,7 @@ var dbCmd = &cobra.Command{
 		connMgr := connection.NewManager(stateStore)
 
 		// Check if active connection already exists
-		if !serverModeFlag {
+		if !rdsServerModeFlag {
 			conn, err := connMgr.GetActiveConnection(dbResource.Name)
 			if err == nil && conn != nil {
 				// If the connection is not in a healthy or recovering state, we clean it up and restart
@@ -71,15 +129,15 @@ var dbCmd = &cobra.Command{
 					if stateStr == "" {
 						stateStr = "Healthy"
 					}
-					fmt.Printf("Tunnel to database %q is already running in background (PID: %d, State: %s).\n", conn.Name, conn.Pid, stateStr)
-					fmt.Printf("Database %q is listening on local port %d.\n", conn.Name, conn.LocalPort)
+					fmt.Printf("Tunnel to RDS database %q is already running in background (PID: %d, State: %s).\n", conn.Name, conn.Pid, stateStr)
+					fmt.Printf("RDS database %q is listening on local port %d.\n", conn.Name, conn.LocalPort)
 					return
 				}
 			}
 		}
 
 		// Local port mapping
-		localPort := portFlag
+		localPort := rdsPortFlag
 		if localPort <= 0 {
 			localPort = dbResource.LocalPort
 		}
@@ -96,7 +154,7 @@ var dbCmd = &cobra.Command{
 		}
 
 		// 3. Handshake connectivity check (only in foreground/parent mode!)
-		if !serverModeFlag {
+		if !rdsServerModeFlag {
 			// Verify bastion and SSM connectivity with a quick handshake
 			fmt.Printf("Verifying connection to bastion %s...\n", target.BastionInstanceID)
 			if err := connMgr.PreflightHandshake(ctx, awsProvider, target, dbResource.Engine); err != nil {
@@ -105,7 +163,7 @@ var dbCmd = &cobra.Command{
 			}
 			fmt.Println("Connection handshake successful.")
 
-			if !foregroundFlag {
+			if !rdsForegroundFlag {
 				// Launch detached background daemon
 				logDir := filepath.Join(filepath.Dir(sPath), "logs")
 				if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -113,13 +171,13 @@ var dbCmd = &cobra.Command{
 					os.Exit(1)
 				}
 
-				daemon, err := connection.SpawnDaemon(os.Args[0], "db", dbResource.Name, localPort, logDir)
+				daemon, err := connection.SpawnDaemon(os.Args[0], "rds", dbResource.Name, localPort, logDir)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error spawning background daemon: %v\n", err)
 					os.Exit(1)
 				}
 
-				fmt.Printf("Starting background tunnel daemon for database %s (port %d)...\n", dbResource.Name, localPort)
+				fmt.Printf("Starting background tunnel daemon for RDS database %s (port %d)...\n", dbResource.Name, localPort)
 				finalLocalPort, err := daemon.VerifyRegistration(stateStore, 5*time.Second)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "Error: background daemon failed to initialize. Check logs:")
@@ -135,14 +193,14 @@ var dbCmd = &cobra.Command{
 				}
 
 				fmt.Printf("Success! Tunnel established in background.\n")
-				fmt.Printf("Database %q is listening on local port %d.\n", dbResource.Name, finalLocalPort)
+				fmt.Printf("RDS database %q is listening on local port %d.\n", dbResource.Name, finalLocalPort)
 				fmt.Printf("Log file: %s\n", daemon.LogPath())
 				return
 			}
 		}
 
 		// 4. Server mode: use supervisor with auto-reconnection
-		if serverModeFlag {
+		if rdsServerModeFlag {
 			connection.IgnoreUserSignals()
 			connID := fmt.Sprintf("cx-conn-%s-%d", dbResource.Name, target.PreferredLocalPort)
 			logger := log.New(os.Stderr, "", log.LstdFlags)
@@ -150,7 +208,7 @@ var dbCmd = &cobra.Command{
 
 			sv := connection.NewSupervisor(connection.SupervisorConfig{
 				Name:   dbResource.Name,
-				Type:   "database",
+				Type:   "rds",
 				Dialer: dialer,
 				Policy: connection.NewFixedBackoff(5*time.Second, 50),
 				Logger: logger,
@@ -198,7 +256,7 @@ var dbCmd = &cobra.Command{
 		}
 		defer func() { _ = tunnelConn.Close() }()
 
-		fmt.Printf("Tunneling database %s (%s) through local port %d...\n", dbResource.Name, dbResource.Engine, target.PreferredLocalPort)
+		fmt.Printf("Tunneling RDS database %s (%s) through local port %d...\n", dbResource.Name, dbResource.Engine, target.PreferredLocalPort)
 		fmt.Println("Press Ctrl+C to terminate connection.")
 
 		<-ctx.Done()
@@ -207,9 +265,9 @@ var dbCmd = &cobra.Command{
 }
 
 func init() {
-	dbCmd.Flags().IntVarP(&portFlag, "port", "p", 0, "Local port override")
-	dbCmd.Flags().BoolVarP(&foregroundFlag, "foreground", "f", false, "Run tunnel in the foreground")
-	dbCmd.Flags().BoolVar(&serverModeFlag, "server", false, "Internal use only: start background tunnel server")
-	_ = dbCmd.Flags().MarkHidden("server")
-	rootCmd.AddCommand(dbCmd)
+	rdsCmd.Flags().IntVarP(&rdsPortFlag, "port", "p", 0, "Local port override")
+	rdsCmd.Flags().BoolVarP(&rdsForegroundFlag, "foreground", "f", false, "Run tunnel in the foreground")
+	rdsCmd.Flags().BoolVar(&rdsServerModeFlag, "server", false, "Internal use only: start background tunnel server")
+	_ = rdsCmd.Flags().MarkHidden("server")
+	rootCmd.AddCommand(rdsCmd)
 }
