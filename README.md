@@ -87,3 +87,36 @@ cx ecs --watch
 # Or using the short flag:
 cx ecs -w
 ```
+
+### ECS Caching (1-Step Selection)
+To bypass the slow network queries and cluster picker, you can enable persistent local caching.
+
+1. **Enable caching** for the active workspace:
+   ```bash
+   cx ecs --cache true
+   ```
+   *Note: If no default cluster is set, you will be prompted to select one from the interactive TUI. This configuration is saved to your `config.yaml` (`ecs.cache: true`, `ecs.default_cluster: "your-cluster"`).*
+
+2. **Run queries instantly**:
+   ```bash
+   cx ecs
+   ```
+   *Bypasses the cluster picker and loads the service selection list instantly from `~/.config/cx/ecs_cache.json`.*
+
+3. **Force refresh the cache**:
+   If clusters or services change in AWS, force a fresh fetch to rebuild the local cache:
+   ```bash
+   cx ecs --refresh
+   # Or using the short flag:
+   cx ecs -r
+   ```
+
+4. **Disable caching**:
+   ```bash
+   cx ecs --cache false
+   ```
+
+To manage configuration or caching for other workspaces without switching to them, pass the `--ws` override flag:
+```bash
+cx ecs --cache true --ws staging
+```
